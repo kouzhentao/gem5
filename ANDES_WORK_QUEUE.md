@@ -8,6 +8,7 @@ Tick contract: complete **one** row below, or implement gem5 for an existing rul
 |----|-------|--------|
 | **P3-exlx-design** | gem5 design | **done** — fix requirements in `rtl_rules.md` (exlx-design); impl frozen |
 | **P3-exlx-impl** | gem5 | Stage-tagged occupancy redesign — **blocked** until user picks approach |
+| **P3-post-rebase** | verify | `execute.o` builds on `scalar` @ upstream/stable `62c7bf2848` — **done** |
 
 ### P3-gem5-ex-lx sub-steps (in order)
 
