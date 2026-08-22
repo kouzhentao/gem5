@@ -160,6 +160,8 @@ Fetch2::updateBranchPrediction(const BranchData &branch)
         // using the branch prediction code.
         branchPredictor.update(inst->id.fetchSeqNum,
             inst->id.threadId);
+        branchPredictor.restoreRasSnapshot(inst->id.threadId,
+            inst->andesRasSnap);
         break;
       case BranchData::CorrectlyPredictedBranch:
         /* Predicted taken, was taken */
@@ -176,6 +178,8 @@ Fetch2::updateBranchPrediction(const BranchData &branch)
         // using the branch prediction code.
         branchPredictor.update(inst->id.fetchSeqNum,
             inst->id.threadId);
+        branchPredictor.restoreRasSnapshot(inst->id.threadId,
+            inst->andesRasSnap);
         break;
       case BranchData::BadlyPredictedBranchTarget:
         /* Predicted taken, was taken but to a different target */
@@ -183,6 +187,14 @@ Fetch2::updateBranchPrediction(const BranchData &branch)
             *inst, *branch.target);
         branchPredictor.squash(inst->id.fetchSeqNum,
             *branch.target, true, inst->id.threadId);
+        // Same as Unpredicted/BadlyPredictedBranch: commit BP/RAS history
+        // up to this sn. Omitting update left mis-targeted returns/calls
+        // sitting in predHist until a later unrelated update().
+        branchPredictor.update(inst->id.fetchSeqNum,
+            inst->id.threadId);
+        /* Andes: redirect FE RAS from II decode shadow (redirect_ras_ptr). */
+        branchPredictor.restoreRasSnapshot(inst->id.threadId,
+            inst->andesRasSnap);
         break;
     }
 }
@@ -200,6 +212,13 @@ Fetch2::predictBranch(MinorDynInstPtr inst, BranchData &branch)
 
         /* Tried to predict */
         inst->triedToPredict = true;
+        /* kv_dec id_ctrl[76]: ~ifu_pred_hit. Approx = BTB miss. */
+        {
+            std::unique_ptr<PCStateBase> btb_pc(inst->pc->clone());
+            inst->andesPredHit =
+                (branchPredictor.BTBLookup(inst->id.threadId, *btb_pc) !=
+                    nullptr);
+        }
 
         DPRINTF(Branch, "Trying to predict for inst: %s\n", *inst);
 

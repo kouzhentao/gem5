@@ -423,7 +423,11 @@ class Executable(TopLevelBase):
         if libs:
             env.Append(LIBS=list(lib.source for lib in libs))
 
-        executable = env.Program(self.path(env).abspath, objs)[0]
+        # Emit under BUILDDIR. self.path() can resolve to src/gem5.* which
+        # breaks CLI targets like build/RISCV/gem5.fast (no LINK).
+        out = os.path.join(str(env['BUILDDIR']),
+                           f"{self.target}.{env['ENV_LABEL']}")
+        executable = env.Program(out, objs)[0]
 
         if sys.platform == 'sunos5':
             cmd = 'cp $SOURCE $TARGET; strip $TARGET'
@@ -445,7 +449,56 @@ class Gem5(Executable):
         env.Depends(date_obj, objs)
         objs.append(date_obj)
 
-        return super().declare(env, objs)
+        binary, stripped = super().declare(env, objs)
+
+        # CLI creates an absolute Entry *before* Program(); that Entry has no
+        # builder, so `scons build/RISCV/gem5.fast` used to finish with 0 LINK.
+        # Point BUILD_TARGETS at the real Program node + Alias for short name.
+        label = env['ENV_LABEL']
+        abs_out = os.path.abspath(binary.abspath)
+        saw = any(
+            os.path.abspath(str(t)) == abs_out
+            or os.path.basename(str(t)) == f'gem5.{label}'
+            or str(t) == f'gem5.{label}'
+            for t in BUILD_TARGETS
+        )
+        link_alias = f'__link_gem5_{label}__'
+        env.Alias(link_alias, binary)
+        env.Alias(f'gem5.{label}', binary)
+        if saw:
+            # Bootstrap: write a link response so we can link even if the
+            # CLI Entry→Program node mismatch makes scons skip LINK.
+            try:
+                srcs = binary.sources if hasattr(binary, 'sources') else []
+                # Executor sources
+                if not srcs and binary.get_executor():
+                    srcs = binary.get_executor().get_all_sources()
+                fo_list = [s.abspath for s in srcs]
+                rsp = os.path.join(str(env['BUILDDIR']),
+                                  f'gem5.{label}.link.rsp')
+                with open(rsp, 'w') as f:
+                    for p in fo_list:
+                        f.write(p + '\n')
+                # Record env link recipe
+                meta = os.path.join(str(env['BUILDDIR']),
+                                   f'gem5.{label}.link.env')
+                with open(meta, 'w') as f:
+                    f.write(f"CXX={env.subst('$CXX')}\n")
+                    f.write(f"LINKFLAGS={env.subst('$LINKFLAGS')}\n")
+                    f.write(f"LIBS={env.subst('$LIBS')}\n")
+                    f.write(f"LIBPATH={env.subst('$LIBPATH')}\n")
+                    f.write(f"LIBFLAGS={env.subst('$_LIBFLAGS')}\n")
+                    f.write(f"LIBDIRFLAGS={env.subst('$_LIBDIRFLAGS')}\n")
+                    f.write(f"OUT={abs_out}\n")
+                    f.write(f"RSP={rsp}\n")
+                    f.write(f"N={len(fo_list)}\n")
+                print(f"[gem5-link] rsp {rsp} n={len(fo_list)}")
+            except Exception as e:
+                print(f"[gem5-link] rsp failed: {e}")
+            BUILD_TARGETS[:] = [link_alias]
+            # Quiet: rsp written for scripts/force_link_gem5.sh
+
+        return [binary, stripped]
 
 
 class GTest(Executable):

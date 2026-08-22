@@ -209,21 +209,12 @@ BPredUnit::predict(const StaticInstPtr &inst, const InstSeqNum &seqNum,
      *    top of the RAS.
      */
     if (ras && branch_detected) {
-        if (inst->isCall()) {
-            // In case of a call build the return address and
-            // push it to the RAS.
-            auto return_addr = inst->buildRetPC(pc, pc);
-            ras->push(tid, *return_addr, hist->rasHistory);
-
-            DPRINTF(Branch, "[tid:%i] [sn:%llu] Instr. %s was "
-                    "a call, push return address %s onto the RAS\n",
-                    tid, seqNum, pc, *return_addr);
-
-        }
-        else if (inst->isReturn()) {
-
-            // If it's a return from a function call, then look up the
-            // RETURN address in the RAS.
+        // RTL (kv_bpu_ctrl): one BTB entry can set CALL and RET together →
+        // ras_push & ras_pop same cycle; kv_bpu_ras replaces the top entry.
+        // RISC-V ABI / gem5 squash path: pop then push when both flags set.
+        // (Old code used if-call / else-if-return → both-flag ops only pushed.)
+        if (inst->isReturn()) {
+            // Look up the RETURN address in the RAS.
             const PCStateBase *return_addr = ras->pop(tid, hist->rasHistory);
             if (return_addr) {
 
@@ -234,7 +225,26 @@ BPredUnit::predict(const StaticInstPtr &inst, const InstSeqNum &seqNum,
                 DPRINTF(Branch, "[tid:%i] [sn:%llu] Instr. %s is a "
                         "return, RAS poped return addr: %s\n",
                         tid, seqNum, pc, *hist->target);
+            } else if (hist->btbHit) {
+                /* Andes kv_bpu_ctrl s118: RET & ~ras_pred_valid → fall-thru
+                 * s162, not the BTB target (stale CALL target in BTB). */
+                std::unique_ptr<PCStateBase> fall(pc.clone());
+                inst->advancePC(*fall);
+                set(hist->target, *fall);
+                hist->targetProvider = TargetProvider::NoTarget;
+                DPRINTF(Branch, "[tid:%i] [sn:%llu] Return RAS invalid; "
+                        "fall-thru %s (not BTB)\n", tid, seqNum, *fall);
             }
+        }
+        if (inst->isCall()) {
+            // Build the return address and push it to the RAS.
+            auto return_addr = inst->buildRetPC(pc, pc);
+            ras->push(tid, *return_addr, hist->rasHistory);
+
+            DPRINTF(Branch, "[tid:%i] [sn:%llu] Instr. %s was "
+                    "a call, push return address %s onto the RAS\n",
+                    tid, seqNum, pc, *return_addr);
+
         }
     }
 
@@ -316,10 +326,17 @@ BPredUnit::predict(const StaticInstPtr &inst, const InstSeqNum &seqNum,
      * the history update if needed.
      * The actual prediction tables will updated once
      * we know the correct direction.
+     *
+     * Andes kv_bpu (s150): BHR := {pred,BHR[7:1]} only when
+     * BTB hit & ~ucond. With requiresBTBHit, skip GHR shift
+     * on BTB miss (BiMode speculativeGHROnUncond=False covers
+     * the uncond case).
      **/
-    cPred->updateHistories(tid, hist->pc, hist->uncond, hist->predTaken,
-                           hist->target->instAddr(), hist->inst,
-                           hist->bpHistory);
+    if (!(requiresBTBHit && !hist->btbHit && !hist->uncond)) {
+        cPred->updateHistories(tid, hist->pc, hist->uncond, hist->predTaken,
+                               hist->target->instAddr(), hist->inst,
+                               hist->bpHistory);
+    }
 
 
     if (iPred) {
@@ -586,6 +603,15 @@ BPredUnit::squash(const InstSeqNum &squashed_sn,
                 "update\n",
                 tid, squashed_sn);
     }
+}
+
+void
+BPredUnit::restoreRasSnapshot(ThreadID tid,
+    const ReturnAddrStack::StackSnapshot &snap)
+{
+    if (!ras || !snap.valid)
+        return;
+    ras->restoreSnapshot(tid, snap);
 }
 
 void

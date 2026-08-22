@@ -131,6 +131,12 @@ class MinorFU(SimObject):
         "type of operations allowed on this functional unit",
     )
     opLat = Param.Cycles(1, "latency in cycles")
+    # 0 → use opLat (default Minor). Andes late ALU sets resultLat < opLat
+    # so scoreboard/commit can complete while FU occupancy drains.
+    resultLat = Param.Cycles(
+        0,
+        "cycles until result is scoreboard-ready; 0 means same as opLat",
+    )
     issueLat = Param.Cycles(
         1, "cycles until another instruction can be issued"
     )
@@ -414,6 +420,51 @@ class BaseMinorCPU(BaseCPU):
         1,
         "Delay from Execute deciding to branch and Fetch1 reacting"
         " (1 means next cycle)",
+    )
+    executeBranchMispredictPenalty = Param.Cycles(
+        0,
+        "Extra execute issue stall cycles after a branch mispredict"
+        " (Andes DS22.8 EX-stage penalty is 5)",
+    )
+    executeBranchMispredictPenaltyLate = Param.Cycles(
+        0,
+        "Mispredict stall when branch issued on late IntFU (LX);"
+        " Andes DS22.8 LX-stage penalty is 7 (EX default is Penalty=5)",
+    )
+
+    enableAndesDualIssueRules = Param.Bool(
+        False,
+        "Enforce Andes kv_iiu_scb dual-issue pairing on slot i1",
+    )
+    enableAndesWAWHazard = Param.Bool(
+        False,
+        "Stall issue when dest reg has in-flight writer (WAW)",
+    )
+    enableAndesNbloadHazard = Param.Bool(
+        False,
+        "Andes nbload (rtl_rules: nbload_resp, ii_*_nbload_hazard): "
+        "allow same-cycle loadb→int past scoreboard (andesSameCycleLateLoadUse); "
+        "MemFU extraAssumedLat models hit latency. NOT modeled: async xrf_w3 "
+        "side-write, dcu_cri vs biu_nbload priority, ctrl[191/184] replay, "
+        "m2_nbload_hazard BIU gate — see executeLSQRequestsQueueSize≈ROB depth.",
+    )
+    enableAndesIiLxOverlap = Param.Bool(
+        False,
+        "Andes II/LX: resultLat vs opLat split; allow in-order head commit "
+        "when late result ready while FU keeps bubble occupancy",
+    )
+    enableAndesStageOccupancy = Param.Bool(
+        False,
+        "Andes II→LX: defer late Int to LX stage queue; early FU 0-1 issue "
+        "while late holds pipe slots (opLat stays 1cy)",
+    )
+    andesLxStageDepth = Param.Cycles(
+        3,
+        "Cycles from II issue to LX ALU for deferred late Int (RTL pipe)",
+    )
+    andesLxStageSlots = Param.Unsigned(
+        2,
+        "Concurrent II→LX stage holds (RTL alu2/3)",
     )
 
     executeFuncUnits = Param.MinorFUPool(

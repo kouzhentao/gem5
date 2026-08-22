@@ -151,10 +151,17 @@ RiscvSemihosting::call(ThreadContext *tc)
 PortProxy &
 RiscvSemihosting::portProxyImpl(ThreadContext *tc)
 {
-    static std::unique_ptr<PortProxy> port_proxy([=]() {
-        return FullSystem ? new TranslatingPortProxy(tc) :
-                            new SETranslatingPortProxy(tc);
-    }());
+    // Must not keep a PortProxy across CPU switches: the proxy's
+    // ThreadContext (and thus getDataPort()) would stay on the old CPU.
+    static ThreadContext *cached_tc = nullptr;
+    static std::unique_ptr<PortProxy> port_proxy;
+    if (cached_tc != tc) {
+        port_proxy.reset(
+            FullSystem ? static_cast<PortProxy *>(new TranslatingPortProxy(tc))
+                       : static_cast<PortProxy *>(
+                             new SETranslatingPortProxy(tc)));
+        cached_tc = tc;
+    }
     return *port_proxy;
 }
 

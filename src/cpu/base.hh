@@ -830,6 +830,9 @@ class BaseCPU : public ClockedObject
 
         /* Number of ops discarded before committing */
         statistics::Scalar numDiscardedOps;
+
+        /* Andes II/LX: in-order head committed before FU front (bubble left) */
+        statistics::Scalar andesIiLxEarlyCommits;
     };
 
     struct CommitCPUStats: public statistics::Group

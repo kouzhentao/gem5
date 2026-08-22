@@ -47,6 +47,7 @@ if env['CONF']['BUILD_ISA']:
         enums=['ThreadPolicy'])
 
     Source('activity.cc')
+    Source('andes_issue_rules.cc')
     Source('cpu.cc')
     Source('decode.cc')
     Source('dyn_inst.cc')

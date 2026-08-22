@@ -54,6 +54,7 @@
 #include "base/types.hh"
 #include "cpu/inst_seq.hh"
 #include "cpu/minor/buffers.hh"
+#include "cpu/pred/ras.hh"
 #include "cpu/static_inst.hh"
 #include "cpu/timing_expr.hh"
 #include "sim/faults.hh"
@@ -209,6 +210,20 @@ class MinorDynInst : public RefCounted
      *  this only happens with mem refs that need to be issued early
      *  to allow other instructions to fill the fetch delay */
     bool canEarlyIssue = false;
+
+    /** Andes: ii_*_late (bit0=0 bypass / IntLate) at issue; used for
+     *  struct hazard late-BR + LS (kv_iiu_scb). */
+    bool andesLatePath = false;
+
+    /** Andes II/LX: cycle when scoreboard result is ready (may precede FU
+     *  exit when resultLat < opLat). */
+    Cycles andesResultReadyCycle{0};
+
+    /** Andes: IFU/BTB pred hit at Fetch2 (kv_dec ~ifu_pred_hit). */
+    bool andesPredHit = false;
+
+    /** Andes II RAS shadow after this inst issued (redirect_ras_ptr). */
+    branch_prediction::ReturnAddrStack::StackSnapshot andesRasSnap;
 
     /** Flag controlling conditional execution of the instruction */
     bool predicate = true;

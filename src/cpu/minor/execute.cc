@@ -37,6 +37,9 @@
 
 #include "cpu/minor/execute.hh"
 
+#include "arch/generic/pcstate.hh"
+#include "cpu/minor/andes_issue_rules.hh"
+
 #include <functional>
 
 #include "cpu/minor/cpu.hh"
@@ -78,6 +81,16 @@ Execute::Execute(const std::string &name_, MinorCPU &cpu_,
       setTraceTimeOnCommit(params.executeSetTraceTimeOnCommit),
       setTraceTimeOnIssue(params.executeSetTraceTimeOnIssue),
       allowEarlyMemIssue(params.executeAllowEarlyMemoryIssue),
+      enableAndesDualIssueRules(params.enableAndesDualIssueRules),
+      enableAndesWAWHazard(params.enableAndesWAWHazard),
+      enableAndesNbloadHazard(params.enableAndesNbloadHazard),
+      enableAndesIiLxOverlap(params.enableAndesIiLxOverlap),
+      enableAndesStageOccupancy(params.enableAndesStageOccupancy),
+      andesLxStageDepth(params.andesLxStageDepth),
+      andesLxStageSlots(params.andesLxStageSlots),
+      branchMispredictPenalty(params.executeBranchMispredictPenalty),
+      branchMispredictPenaltyLate(
+          params.executeBranchMispredictPenaltyLate),
       noCostFUIndex(fuDescriptions.funcUnits.size() + 1),
       lsq(name_ + ".lsq", name_ + ".dcache_port", cpu_, *this,
           params.executeMaxAccessesInMemory, params.executeMemoryWidth,
@@ -294,6 +307,102 @@ Execute::tryToBranch(MinorDynInstPtr inst, Fault fault, BranchData &branch)
 }
 
 void
+Execute::andesIiRasOnIssue(ThreadID tid, MinorDynInstPtr inst)
+{
+    if (!enableAndesDualIssueRules || !inst || inst->isFault() ||
+        inst->isBubble() || !inst->staticInst)
+        return;
+
+    ExecuteThreadInfo &info = executeInfo[tid];
+    StaticInstPtr s = inst->staticInst;
+    const bool is_ret = s->isReturn();
+    const bool is_call = s->isCall();
+
+    if (is_ret || is_call) {
+        auto &slots = info.andesIiRasSlots;
+        const unsigned n = info.andesIiRasEntries;
+        if (slots.size() < n)
+            slots.resize(n);
+
+        if (is_ret && is_call) {
+            if (info.andesIiRasUsed > 0 && inst->pc) {
+                auto retpc = s->buildRetPC(*inst->pc, *inst->pc);
+                if (s->size())
+                    retpc->set(inst->pc->instAddr() + s->size());
+                set(slots[info.andesIiRasTos], retpc.get());
+            }
+        } else if (is_ret) {
+            if (info.andesIiRasUsed > 0)
+                --info.andesIiRasUsed;
+            info.andesIiRasTos =
+                (info.andesIiRasTos == 0) ? (n - 1) : (info.andesIiRasTos - 1);
+        } else if (inst->pc) {
+            auto retpc = s->buildRetPC(*inst->pc, *inst->pc);
+            if (s->size())
+                retpc->set(inst->pc->instAddr() + s->size());
+            unsigned next = info.andesIiRasTos + 1;
+            if (next == n)
+                next = 0;
+            info.andesIiRasTos = next;
+            set(slots[info.andesIiRasTos], retpc.get());
+            if (info.andesIiRasUsed < n)
+                ++info.andesIiRasUsed;
+        }
+    }
+
+    /* Tag post-issue II shadow on every issued inst (redirect_ras_ptr). */
+    auto &snap = inst->andesRasSnap;
+    snap.tos = info.andesIiRasTos;
+    snap.usedEntries = info.andesIiRasUsed;
+    snap.slots.resize(info.andesIiRasEntries);
+    for (unsigned i = 0; i < info.andesIiRasEntries; ++i) {
+        if (i < info.andesIiRasSlots.size() && info.andesIiRasSlots[i])
+            set(snap.slots[i], info.andesIiRasSlots[i].get());
+        else
+            snap.slots[i].reset();
+    }
+    snap.valid = true;
+}
+
+void
+Execute::andesIiRasOnRedirect(ThreadID tid, MinorDynInstPtr inst)
+{
+    if (!enableAndesDualIssueRules || !inst || !inst->andesRasSnap.valid)
+        return;
+    ExecuteThreadInfo &info = executeInfo[tid];
+    const auto &snap = inst->andesRasSnap;
+    info.andesIiRasTos = snap.tos;
+    info.andesIiRasUsed = snap.usedEntries;
+    if (info.andesIiRasSlots.size() < info.andesIiRasEntries)
+        info.andesIiRasSlots.resize(info.andesIiRasEntries);
+    for (unsigned i = 0; i < info.andesIiRasEntries; ++i) {
+        if (i < snap.slots.size() && snap.slots[i])
+            set(info.andesIiRasSlots[i], snap.slots[i].get());
+        else
+            info.andesIiRasSlots[i].reset();
+    }
+}
+
+void
+Execute::andesLxStagePrune(ThreadID tid, Cycles now)
+{
+    auto &holds = executeInfo[tid].andesLxStageHolds;
+    while (!holds.empty() && holds.front().expireCycle <= now)
+        holds.pop_front();
+}
+
+unsigned
+Execute::andesLxStageActiveCount(ThreadID tid, Cycles now) const
+{
+    unsigned count = 0;
+    for (const auto &hold : executeInfo[tid].andesLxStageHolds) {
+        if (hold.expireCycle > now)
+            ++count;
+    }
+    return count;
+}
+
+void
 Execute::updateBranchData(
     ThreadID tid,
     BranchData::Reason reason,
@@ -301,6 +410,35 @@ Execute::updateBranchData(
     BranchData &branch)
 {
     if (reason != BranchData::NoBranch) {
+        /* Andes DS238 §22.8: 5cy EX / 7cy LX. Only true mispredicts —
+         * NOT UnpredictedBranch (BTB miss on taken): that was stacking stalls
+         * on nearly every taken branch and livelocking the sim.
+         * Late(=7) when ii_*_late (andesLatePath). Branches issue on IntFU (IntAlu);
+         * Late(=7) via andesLatePath — do NOT key off fuIndex alone. */ 
+        if ((reason == BranchData::BadlyPredictedBranch ||
+             reason == BranchData::BadlyPredictedBranchTarget) &&
+            !inst->isBubble()) {
+            Cycles pen = branchMispredictPenalty;
+            if (branchMispredictPenaltyLate > Cycles(0) &&
+                inst->andesLatePath) {
+                pen = branchMispredictPenaltyLate;
+            }
+            if (pen > Cycles(0)) {
+                /* Don't push stall further out if already past (avoid stack). */
+                Cycles until = cpu.curCycle() + pen;
+                if (until > executeInfo[tid].issueStallUntil)
+                    executeInfo[tid].issueStallUntil = until;
+            }
+        }
+
+        /* Roll II RAS shadow back to killing insn (younger issue discarded). */
+        if (BranchData::isStreamChange(reason) &&
+            (reason == BranchData::BadlyPredictedBranch ||
+             reason == BranchData::BadlyPredictedBranchTarget ||
+             reason == BranchData::UnpredictedBranch)) {
+            andesIiRasOnRedirect(tid, inst);
+        }
+
         /* Bump up the stream sequence number on a real branch*/
         if (BranchData::isStreamChange(reason))
             executeInfo[tid].streamSeqNum++;
@@ -545,9 +683,21 @@ Execute::issue(ThreadID thread_id)
     const ForwardInstData *insts_in = getInput(thread_id);
     ExecuteThreadInfo &thread = executeInfo[thread_id];
 
+    if (enableAndesStageOccupancy)
+        andesLxStagePrune(thread_id, cpu.curCycle());
+
     /* Early termination if we have no instructions */
     if (!insts_in)
         return 0;
+
+    if (executeInfo[thread_id].issueStallUntil > Cycles(0) &&
+        cpu.curCycle() < executeInfo[thread_id].issueStallUntil) {
+        DPRINTF(MinorExecute, "Issue stalled until cycle %d (mispredict)\n",
+            executeInfo[thread_id].issueStallUntil);
+        return 0;
+    }
+
+    MinorDynInstPtr first_issued_inst = nullptr;
 
     /* Start from the first FU */
     unsigned int fu_index = 0;
@@ -667,9 +817,49 @@ Execute::issue(ThreadID thread_id)
                         DPRINTF(MinorExecute, "Can't issue inst: %s as extra"
                             " decoding is suppressing it\n",
                             *inst);
+                    } else if (enableAndesDualIssueRules && timing &&
+                        timing->description == "IntEarly" &&
+                        andesIntShouldUseLateFU(scoreboard[thread_id], inst,
+                            cpu.getContext(thread_id),
+                            fu->cantForwardFromFUIndices, cpu.curCycle())) {
+                        /* kv_iiu ii_*_late: LS (etc.) producer → LX ALU, not EX. */
+                        DPRINTF(MinorExecute, "Can't issue inst: %s to early"
+                            " IntFU; needs late (ii_*_late)\n", *inst);
+                    } else if (enableAndesDualIssueRules && timing &&
+                        timing->description == "IntEarly" &&
+                        first_issued_inst &&
+                        andesSameCycleLateLoadUse(first_issued_inst, inst)) {
+                        /* kv_iiu_scb s199[1]/s200[1]: same-cycle i0 load +
+                         * i1 RAW → ii_i1_late (LX), not EX. */
+                        DPRINTF(MinorExecute, "Can't issue inst: %s to early"
+                            " IntFU; same-cycle loadb use needs late\n",
+                            *inst);
+                    } else if (enableAndesDualIssueRules && first_issued_inst &&
+                        !andesDualIssuePairAllowed(first_issued_inst, inst)) {
+                        DPRINTF(MinorExecute, "Can't issue inst: %s Andes"
+                            " dual-issue pair blocked\n", *inst);
+                    } else if (enableAndesWAWHazard && first_issued_inst &&
+                        !andesSameCycleWAWAllowed(first_issued_inst, inst,
+                            scoreboard[thread_id],
+                            cpu.getContext(thread_id),
+                            fu->cantForwardFromFUIndices, cpu.curCycle())) {
+                        /* kv_iiu_scb same-cycle WAW/RAW (+ late load-use). */
+                        DPRINTF(MinorExecute, "Can't issue inst: %s Andes"
+                            " same-cycle WAW blocked\n", *inst);
+                    } else if (enableAndesStageOccupancy && timing &&
+                        timing->description == "IntLate" &&
+                        andesLxStageActiveCount(thread_id, cpu.curCycle()) >=
+                            andesLxStageSlots) {
+                        DPRINTF(MinorExecute, "Can't issue inst: %s Andes"
+                            " LX stage slots full\n", *inst);
                     } else if (!scoreboard[thread_id].canInstIssue(inst,
                         src_latencies, cant_forward_from_fu_indices,
-                        cpu.curCycle(), cpu.getContext(thread_id)))
+                        cpu.curCycle(), cpu.getContext(thread_id),
+                        enableAndesWAWHazard) &&
+                        /* nbload marks load dest unpredictable; still allow
+                         * same-cycle loadb→int (RTL mm_ls_loadb late path). */
+                        !(enableAndesNbloadHazard && first_issued_inst &&
+                            andesSameCycleLateLoadUse(first_issued_inst, inst)))
                     {
                         DPRINTF(MinorExecute, "Can't issue inst: %s yet\n",
                             *inst);
@@ -678,6 +868,16 @@ Execute::issue(ThreadID thread_id)
                         DPRINTF(MinorExecute, "Issuing inst: %s"
                             " into FU %d\n", *inst,
                             fu_index);
+                        if (enableAndesDualIssueRules && !inst->isFault()) {
+                            /* Mark ii_*_late for struct (late BR + LS). */
+                            inst->andesLatePath =
+                                (timing && timing->description == "IntLate") ||
+                                andesSrcNeedsLatePath(scoreboard[thread_id],
+                                    inst, cpu.getContext(thread_id),
+                                    fu->cantForwardFromFUIndices,
+                                    cpu.curCycle());
+                        }
+                        andesIiRasOnIssue(thread_id, inst);
                         // Update ALU access stats.
                         if (!inst->isFault()) {
                             auto tid = thread_id;
@@ -758,23 +958,36 @@ Execute::issue(ThreadID thread_id)
                             issueStats.issuedInstType[thread_id][opclass]++;
                         }
 
-                        /* Issue to FU */
+                        /* Issue to FU; LX stage uses minimumCommitCycle. */
+                        Cycles lx_stage_delay = Cycles(0);
+                        if (enableAndesStageOccupancy && timing &&
+                            timing->description == "IntLate") {
+                            lx_stage_delay = andesLxStageDepth;
+                            const Cycles lx_ready =
+                                cpu.curCycle() + lx_stage_delay;
+                            if (lx_ready > inst->minimumCommitCycle)
+                                inst->minimumCommitCycle = lx_ready;
+                            ExecuteThreadInfo::AndesLxStageHold hold;
+                            hold.expireCycle = lx_ready;
+                            thread.andesLxStageHolds.push_back(hold);
+                        }
+
+                        Cycles result_lat = fu->description.resultLat +
+                            extra_dest_retire_lat + extra_assumed_lat +
+                            lx_stage_delay;
+
+                        inst->andesResultReadyCycle =
+                            cpu.curCycle() + result_lat;
+
+                        scoreboard[thread_id].markupInstDests(inst,
+                            inst->andesResultReadyCycle,
+                            cpu.getContext(thread_id),
+                            (issued_mem_ref && extra_assumed_lat == Cycles(0)));
+
                         fu->push(fu_inst);
-                        /* And start the countdown on activity to allow
-                         *  this instruction to get to the end of its FU */
+
                         cpu.activityRecorder->activity();
 
-                        /* Mark the destinations for this instruction as
-                         *  busy */
-                        scoreboard[thread_id].markupInstDests(inst, cpu.curCycle() +
-                            fu->description.opLat +
-                            extra_dest_retire_lat +
-                            extra_assumed_lat,
-                            cpu.getContext(thread_id),
-                            issued_mem_ref && extra_assumed_lat == Cycles(0));
-
-                        /* Push the instruction onto the inFlight queue so
-                         *  it can be committed in order */
                         thread.inFlightInsts->push(fu_inst);
 
                         issued = true;
@@ -812,6 +1025,9 @@ Execute::issue(ThreadID thread_id)
 
             if (!discarded && !inst->isBubble()) {
                 num_insts_issued++;
+
+                if (!first_issued_inst)
+                    first_issued_inst = inst;
 
                 if (num_insts_issued == issueLimit)
                     DPRINTF(MinorExecute, "Reached inst issue limit\n");
@@ -1170,6 +1386,7 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
         bool completed_mem_ref = false;
         bool issued_mem_ref = false;
         bool early_memory_issue = false;
+        bool andes_ii_lx_early = false;
 
         /* Must set this again to go around the loop */
         completed_inst = false;
@@ -1282,7 +1499,8 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                 InstSeqNum fu_inst_seq_num = fu_inst.inst->id.execSeqNum;
 
                 if (fu_inst.inst->isBubble()) {
-                    /* No instruction ready */
+                    /* No instruction ready at FU exit — Andes II/LX may still
+                     * early-commit a late head whose result is already ready. */
                     completed_inst = false;
                 } else if (fu_inst_seq_num != head_exec_seq_num) {
                     /* Past instruction: we must have already executed it
@@ -1297,6 +1515,23 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                     try_to_commit = true;
                     completed_inst = true;
                 }
+            }
+
+            /* Andes II/LX: in-order head late ALU result ready before FU exit */
+            if (!completed_inst && !inst->inLSQ && enableAndesIiLxOverlap &&
+                !inst->isFault() && !inst->isBubble() &&
+                inst->fuIndex != noCostFUIndex &&
+                !inst->staticInst->isMemRef() &&
+                inst->andesLatePath &&
+                funcUnits[inst->fuIndex]->description.resultLat <
+                    funcUnits[inst->fuIndex]->description.opLat &&
+                cpu.curCycle() >= inst->andesResultReadyCycle)
+            {
+                DPRINTF(MinorExecute, "Andes II/LX early commit inst: %s\n",
+                    *inst);
+                try_to_commit = true;
+                completed_inst = true;
+                andes_ii_lx_early = true;
             }
 
             if (try_to_commit) {
@@ -1375,8 +1610,18 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                      *  but had already been committed, it would have
                      *  unstalled the pipeline before here */
                     if (inst->fuIndex != noCostFUIndex) {
-                        DPRINTF(MinorExecute, "Unstalling %d for inst %s\n", inst->fuIndex, inst->id);
-                        funcUnits[inst->fuIndex]->stalled = false;
+                        if (andes_ii_lx_early) {
+                            DPRINTF(MinorExecute, "Andes II/LX bubble-replace"
+                                " FU %d for inst %s\n",
+                                inst->fuIndex, inst->id);
+                            funcUnits[inst->fuIndex]->replaceInstWithBubble(
+                                inst->id.execSeqNum);
+                            cpu.executeStats[thread_id]->andesIiLxEarlyCommits++;
+                        } else {
+                            DPRINTF(MinorExecute, "Unstalling %d for inst %s\n",
+                                inst->fuIndex, inst->id);
+                            funcUnits[inst->fuIndex]->stalled = false;
+                        }
                     }
                 }
             }
@@ -1621,22 +1866,35 @@ Execute::evaluate()
     bool head_inst_might_commit = false;
 
     /* Could the head in flight insts be committed */
-    for (auto const &info : executeInfo) {
-        if (!info.inFlightInsts->empty()) {
-            const QueuedInst &head_inst = info.inFlightInsts->front();
+    for (ThreadID tid = 0; tid < cpu.numThreads; tid++) {
+        const ExecuteThreadInfo &info = executeInfo[tid];
+        if (info.inFlightInsts->empty())
+            continue;
 
-            if (head_inst.inst->isNoCostInst()) {
-                head_inst_might_commit = true;
-            } else {
-                FUPipeline *fu = funcUnits[head_inst.inst->fuIndex];
-                if ((fu->stalled &&
-                     fu->front().inst->id == head_inst.inst->id) ||
-                     lsq.findResponse(head_inst.inst))
-                {
-                    head_inst_might_commit = true;
-                    break;
-                }
-            }
+        const QueuedInst &head_inst = info.inFlightInsts->front();
+
+        if (head_inst.inst->isNoCostInst()) {
+            head_inst_might_commit = true;
+            break;
+        }
+
+        if (head_inst.inst->minimumCommitCycle > cpu.curCycle()) {
+            head_inst_might_commit = true;
+            break;
+        }
+
+        FUPipeline *fu = funcUnits[head_inst.inst->fuIndex];
+        if ((fu->stalled &&
+             fu->front().inst->id == head_inst.inst->id) ||
+             lsq.findResponse(head_inst.inst) ||
+             (enableAndesIiLxOverlap &&
+              head_inst.inst->andesLatePath &&
+              fu->description.resultLat < fu->description.opLat &&
+              cpu.curCycle() >=
+                  head_inst.inst->andesResultReadyCycle))
+        {
+            head_inst_might_commit = true;
+            break;
         }
     }
 

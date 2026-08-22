@@ -105,6 +105,8 @@ class BiModeBP : public ConditionalPredictor
         // true: predict taken
         // false: predict not-taken
         bool finalPred;
+        /** True if this history was for an unconditional control. */
+        bool wasUncond = false;
     };
 
     std::vector<unsigned> globalHistoryReg;
@@ -117,6 +119,11 @@ class BiModeBP : public ConditionalPredictor
     unsigned globalPredictorSize;
     unsigned globalCtrBits;
     unsigned globalHistoryMask;
+
+    /** If false, GHR is not shifted for uncond (Andes BHR ≈ cond-only). */
+    const bool speculativeGHROnUncond;
+    /** If true, always update choice toward outcome (Andes BHT). */
+    const bool alwaysUpdateChoice;
 
     // choice predictors
     std::vector<SatCounter8> choiceCounters;

@@ -208,7 +208,8 @@ bool
 Scoreboard::canInstIssue(MinorDynInstPtr inst,
     const std::vector<Cycles> *src_reg_relative_latencies,
     const std::vector<bool> *cant_forward_from_fu_indices,
-    Cycles now, ThreadContext *thread_context)
+    Cycles now, ThreadContext *thread_context,
+    bool check_waw_inflight)
 {
     /* Always allow fault to be issued */
     if (inst->isFault())
@@ -263,6 +264,20 @@ Scoreboard::canInstIssue(MinorDynInstPtr inst,
             }
         }
         src_index++;
+    }
+
+    /* WAW: dest must not be busy (kv_iiu_scb in-flight write). */
+    if (ret && check_waw_inflight) {
+        unsigned int num_dests = staticInst->numDestRegs();
+        for (unsigned int dest_index = 0; dest_index < num_dests &&
+            ret; dest_index++)
+        {
+            RegId reg = staticInst->destRegIdx(dest_index).flatten(*isa);
+            Index index;
+
+            if (findIndex(reg, index) && numResults[index] > 0)
+                ret = false;
+        }
     }
 
     if (debug::MinorTiming) {

@@ -127,6 +127,10 @@ class BPredUnit : public SimObject
     void squash(const InstSeqNum &squashed_sn, const PCStateBase &corr_target,
                 bool actually_taken, ThreadID tid, bool from_commit=true);
 
+    /** Andes: restore FE RAS from II decode shadow (redirect_ras_ptr). */
+    void restoreRasSnapshot(ThreadID tid,
+        const ReturnAddrStack::StackSnapshot &snap);
+
     /**
      * Looks up a given PC in the BTB to see if a matching entry exists.
      * @param tid The thread id.

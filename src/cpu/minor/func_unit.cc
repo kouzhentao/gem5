@@ -172,6 +172,28 @@ FUPipeline::advance()
     FUPipelineBase::advance();
 }
 
+bool
+FUPipeline::replaceInstWithBubble(InstSeqNum exec_seq_num)
+{
+    /* Depth matches SelfStallingPipeline ctor (description.opLat). */
+    const int depth = description.opLat;
+    for (int i = 0; i >= -depth; --i) {
+        QueuedInst &slot = (*this)[i];
+        if (slot.inst->isBubble())
+            continue;
+        if (slot.inst->id.execSeqNum != exec_seq_num)
+            continue;
+        const bool was_front = (i == -depth);
+        slot = QueuedInst::bubble();
+        if (occupancy > 0)
+            --occupancy;
+        if (was_front)
+            stalled = false;
+        return true;
+    }
+    return false;
+}
+
 MinorFUTiming *
 FUPipeline::findTiming(const StaticInstPtr &inst)
 {

@@ -158,7 +158,8 @@ class Scoreboard : public Named
     bool canInstIssue(MinorDynInstPtr inst,
         const std::vector<Cycles> *src_reg_relative_latencies,
         const std::vector<bool> *cant_forward_from_fu_indices,
-        Cycles now, ThreadContext *thread_context);
+        Cycles now, ThreadContext *thread_context,
+        bool check_waw_inflight = false);
 
     /** MinorTraceIF interface */
     void minorTrace() const;

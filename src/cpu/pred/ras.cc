@@ -175,12 +175,23 @@ ReturnAddrStack::push(ThreadID tid, const PCStateBase &pc,
     stats.pushes++;
     history->pushed = true;
 
-    addrStacks[tid].push(pc);
+    AddrStack &stk = addrStacks[tid];
+    /* Snapshot before push — squash must not use pop() when the stack was
+     * already full (wrap overwrite): pop() would wrongly --usedEntries. */
+    history->pushTos = stk.tos;
+    history->pushUsedEntries = stk.usedEntries;
+    unsigned next = stk.tos + 1;
+    if (next == stk.numEntries)
+        next = 0;
+    if (stk.addrStack[next])
+        set(history->pushOverwritten, stk.addrStack[next].get());
+    else
+        history->pushOverwritten.reset();
+
+    stk.push(pc);
 
     DPRINTF(RAS, "%s: RAS[%i] <= %#x. Entries used: %i, tid:%i\n", __func__,
-                    addrStacks[tid].tos, pc.instAddr(),
-                    addrStacks[tid].usedEntries,tid);
-    // DPRINTF(RAS, "[%s]\n", addrStacks[tid].toString(10));
+                    stk.tos, pc.instAddr(), stk.usedEntries, tid);
 }
 
 
@@ -193,21 +204,29 @@ ReturnAddrStack::pop(ThreadID tid, void * &ras_history)
         makeRASHistory(ras_history);
     }
     RASHistory *history = static_cast<RASHistory*>(ras_history);
+
+    // Andes/RTL (kv_bpu_ras + kv_bpu_ctrl): ras_pred_valid=0 → do not use
+    // stack data; target falls back (s162). gem5 keeps stale PCs in slots
+    // after usedEntries hits 0 — returning them as RAS targets is wrong.
+    if (addrStacks[tid].empty()) {
+        DPRINTF(RAS, "%s: RAS empty (invalid); no target, tid:%i\n",
+                __func__, tid);
+        return nullptr;
+    }
+
     stats.pops++;
 
     history->poped = true;
-    history->tos = addrStacks[tid].tos;
-
-
-    set(history->ras_entry, addrStacks[tid].top());
-    // Pop the top of stack
-    addrStacks[tid].pop();
+    AddrStack &stk = addrStacks[tid];
+    history->tos = stk.tos;
+    history->usedEntries = stk.usedEntries;
+    set(history->ras_entry, stk.top());
+    stk.pop();
 
     DPRINTF(RAS, "%s: RAS[%i] => %#x. Entries used: %i, tid:%i\n", __func__,
-            addrStacks[tid].tos, (history->ras_entry.get() != nullptr)
+            stk.tos, (history->ras_entry.get() != nullptr)
             ? history->ras_entry->instAddr() : 0,
-            addrStacks[tid].usedEntries, tid);
-    // DPRINTF(RAS, "[%s]\n", addrStacks[tid].toString(10));
+            stk.usedEntries, tid);
 
     return history->ras_entry.get();
 }
@@ -223,28 +242,71 @@ ReturnAddrStack::squash(ThreadID tid, void * &ras_history)
     stats.squashes++;
 
     RASHistory *history = static_cast<RASHistory*>(ras_history);
+    AddrStack &stk = addrStacks[tid];
 
     if (history->pushed) {
-        stats.pops++;
-        addrStacks[tid].pop();
+        /* Exact restore of pre-push state (fixes full-stack wrap undo). */
+        unsigned cur = stk.tos;
+        if (history->pushOverwritten)
+            set(stk.addrStack[cur], history->pushOverwritten.get());
+        else
+            stk.addrStack[cur].reset();
+        stk.tos = history->pushTos;
+        stk.usedEntries = history->pushUsedEntries;
 
-        DPRINTF(RAS, "RAS::%s Incorrect push. Pop RAS[%i]. "
-                "Entries used: %i, tid:%i\n", __func__,
-                addrStacks[tid].tos, addrStacks[tid].usedEntries, tid);
+        DPRINTF(RAS, "RAS::%s Incorrect push. Restore TOS=%i used=%i, tid:%i\n",
+                __func__, stk.tos, stk.usedEntries, tid);
     }
 
     if (history->poped) {
-        stats.pushes++;
-        addrStacks[tid].restore(history->tos, history->ras_entry.get());
-        DPRINTF(RAS, "RAS::%s Incorrect pop. Restore to: RAS[%i]:%#x. "
-            "Entries used: %i, tid:%i\n", __func__,
-            history->tos,  (history->ras_entry.get() != nullptr)
+        stk.tos = history->tos;
+        if (history->ras_entry)
+            set(stk.addrStack[stk.tos], history->ras_entry.get());
+        stk.usedEntries = history->usedEntries;
+
+        DPRINTF(RAS, "RAS::%s Incorrect pop. Restore to: RAS[%i]:%#x used=%i, "
+            "tid:%i\n", __func__, stk.tos,
+            (history->ras_entry.get() != nullptr)
             ? history->ras_entry->instAddr() : 0,
-            addrStacks[tid].usedEntries, tid);
+            stk.usedEntries, tid);
     }
-    // DPRINTF(RAS, "[%s]\n", addrStacks[tid].toString(10));
     delete history;
     ras_history = nullptr;
+}
+
+void
+ReturnAddrStack::captureSnapshot(ThreadID tid, StackSnapshot &snap) const
+{
+    const AddrStack &stk = addrStacks[tid];
+    snap.tos = stk.tos;
+    snap.usedEntries = stk.usedEntries;
+    snap.slots.resize(stk.numEntries);
+    for (unsigned i = 0; i < stk.numEntries; ++i) {
+        if (stk.addrStack[i])
+            set(snap.slots[i], stk.addrStack[i].get());
+        else
+            snap.slots[i].reset();
+    }
+    snap.valid = true;
+}
+
+void
+ReturnAddrStack::restoreSnapshot(ThreadID tid, const StackSnapshot &snap)
+{
+    if (!snap.valid)
+        return;
+    AddrStack &stk = addrStacks[tid];
+    assert(snap.slots.size() == stk.numEntries);
+    stk.tos = snap.tos;
+    stk.usedEntries = snap.usedEntries;
+    for (unsigned i = 0; i < stk.numEntries; ++i) {
+        if (snap.slots[i])
+            set(stk.addrStack[i], snap.slots[i].get());
+        else
+            stk.addrStack[i].reset();
+    }
+    DPRINTF(RAS, "RAS::%s redirected TOS=%i used=%i tid:%i\n",
+            __func__, stk.tos, stk.usedEntries, tid);
 }
 
 void

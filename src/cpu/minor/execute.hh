@@ -45,6 +45,8 @@
 #ifndef __CPU_MINOR_EXECUTE_HH__
 #define __CPU_MINOR_EXECUTE_HH__
 
+#include <deque>
+#include <memory>
 #include <vector>
 
 #include "base/named.hh"
@@ -114,6 +116,21 @@ class Execute : public Named
      *  of the in flight insts queue if their dependencies are met */
     bool allowEarlyMemIssue;
 
+    /** Andes RTL extensions (kv_iiu_scb / DS branch penalty). */
+    bool enableAndesDualIssueRules;
+    bool enableAndesWAWHazard;
+    bool enableAndesNbloadHazard;
+    /** II/LX: early in-order commit when resultLat < opLat. */
+    bool enableAndesIiLxOverlap;
+    /** RTL II→LX pipe occupancy decoupled from late FU opLat (exlx-3). */
+    bool enableAndesStageOccupancy;
+    Cycles andesLxStageDepth;
+    unsigned andesLxStageSlots;
+    /** DS22.8: EX-stage resolve (uncond / early). */
+    Cycles branchMispredictPenalty;
+    /** DS22.8: LX-stage resolve (conditional / late ALU). */
+    Cycles branchMispredictPenaltyLate;
+
     /** The FU index of the non-existent costless FU for instructions
      *  which pass the MinorDynInst::isNoCostInst test */
     unsigned int noCostFUIndex;
@@ -158,8 +175,11 @@ class Execute : public Named
             instsBeingCommitted(insts_committed),
             streamSeqNum(InstId::firstStreamSeqNum),
             lastPredictionSeqNum(InstId::firstPredictionSeqNum),
-            drainState(NotDraining)
-        { }
+            drainState(NotDraining),
+            issueStallUntil(0)
+        {
+            andesIiRasSlots.resize(andesIiRasEntries);
+        }
 
         ExecuteThreadInfo(const ExecuteThreadInfo& other) :
             inputIndex(other.inputIndex),
@@ -167,8 +187,15 @@ class Execute : public Named
             instsBeingCommitted(other.instsBeingCommitted),
             streamSeqNum(other.streamSeqNum),
             lastPredictionSeqNum(other.lastPredictionSeqNum),
-            drainState(other.drainState)
-        { }
+            drainState(other.drainState),
+            issueStallUntil(other.issueStallUntil),
+            andesIiRasEntries(other.andesIiRasEntries),
+            andesIiRasTos(other.andesIiRasTos),
+            andesIiRasUsed(other.andesIiRasUsed),
+            andesLxStageHolds(other.andesLxStageHolds)
+        {
+            andesIiRasSlots.resize(andesIiRasEntries);
+        }
 
         /** In-order instructions either in FUs or the LSQ */
         Queue<QueuedInst, ReportTraitsAdaptor<QueuedInst> > *inFlightInsts;
@@ -202,6 +229,22 @@ class Execute : public Named
 
         /** State progression for draining NotDraining -> ... -> DrainAllInsts */
         DrainState drainState;
+
+        /** Stall issue until after branch mispredict penalty (Andes DS22.8). */
+        Cycles issueStallUntil;
+
+        /**
+         * Andes II RAS shadow (kv_iiu s23 / ras_ptr): updated at issue from
+         * decode call/ret; tagged onto each issued inst for redirect.
+         */
+        unsigned andesIiRasEntries = 4;
+        unsigned andesIiRasTos = 0;
+        unsigned andesIiRasUsed = 0;
+        std::vector<std::unique_ptr<PCStateBase>> andesIiRasSlots;
+
+        /** II→LX stage holds (kv_ipipe pipe regs), not late FU opLat. */
+        struct AndesLxStageHold { Cycles expireCycle; };
+        std::deque<AndesLxStageHold> andesLxStageHolds;
     };
 
     std::vector<ExecuteThreadInfo> executeInfo;
@@ -212,6 +255,13 @@ class Execute : public Named
 
   protected:
     friend std::ostream &operator <<(std::ostream &os, DrainState state);
+
+    /** Andes II RAS shadow: apply call/ret at issue; tag inst; restore on redirect. */
+    void andesIiRasOnIssue(ThreadID tid, MinorDynInstPtr inst);
+    void andesIiRasOnRedirect(ThreadID tid, MinorDynInstPtr inst);
+
+    void andesLxStagePrune(ThreadID tid, Cycles now);
+    unsigned andesLxStageActiveCount(ThreadID tid, Cycles now) const;
 
     /** Get a piece of data to work on from the inputBuffer, or 0 if there
      *  is no data. */

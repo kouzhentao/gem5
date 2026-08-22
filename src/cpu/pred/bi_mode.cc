@@ -61,6 +61,8 @@ BiModeBP::BiModeBP(const BiModeBPParams &params)
       choiceCtrBits(params.choiceCtrBits),
       globalPredictorSize(params.globalPredictorSize),
       globalCtrBits(params.globalCtrBits),
+      speculativeGHROnUncond(params.speculativeGHROnUncond),
+      alwaysUpdateChoice(params.alwaysUpdateChoice),
       choiceCounters(choicePredictorSize, SatCounter8(choiceCtrBits)),
       takenCounters(globalPredictorSize, SatCounter8(globalCtrBits)),
       notTakenCounters(globalPredictorSize, SatCounter8(globalCtrBits))
@@ -93,6 +95,7 @@ BiModeBP::uncondBranch(ThreadID tid, Addr pc, void * &bp_history)
     history->takenPred = true;
     history->notTakenPred = true;
     history->finalPred = true;
+    history->wasUncond = true;
     bp_history = static_cast<void*>(history);
 }
 
@@ -104,6 +107,10 @@ BiModeBP::updateHistories(ThreadID tid, Addr pc, bool uncond, bool taken,
     assert(uncond || bp_history);
     if (uncond) {
         uncondBranch(tid, pc, bp_history);
+        /* Andes kv_bpu: BHR := {pred, BHR[7:1]} only when BTB hit & ~ucond. */
+        if (speculativeGHROnUncond)
+            updateGlobalHistReg(tid, taken);
+        return;
     }
     updateGlobalHistReg(tid, taken);
 }
@@ -161,6 +168,7 @@ BiModeBP::lookup(ThreadID tid, Addr branchAddr, void * &bp_history)
     }
 
     history->finalPred = finalPrediction;
+    history->wasUncond = false;
     bp_history = static_cast<void*>(history);
 
     return finalPrediction;
@@ -184,7 +192,13 @@ BiModeBP::update(ThreadID tid, Addr branchAddr, bool taken,void * &bp_history,
     // We do not update the counters speculatively on a squash.
     // We just restore the global history register.
     if (squashed) {
-        globalHistoryReg[tid] = (history->globalHistoryReg << 1) | taken;
+        /* Cond: install actual outcome into GHR. Uncond (Andes): BHR
+         * never saw this branch — leave GHR at pre-branch snapshot. */
+        if (!speculativeGHROnUncond && history->wasUncond) {
+            globalHistoryReg[tid] = history->globalHistoryReg;
+        } else {
+            globalHistoryReg[tid] = (history->globalHistoryReg << 1) | taken;
+        }
         return;
     }
 
@@ -213,26 +227,13 @@ BiModeBP::update(ThreadID tid, Addr branchAddr, bool taken,void * &bp_history,
         }
     }
 
-    if (history->finalPred == taken) {
-       /* If the final prediction matches the actual branch's
-        * outcome and the choice predictor matches the final
-        * outcome, we update the choice predictor, otherwise it
-        * is not updated. While the designers of the bi-mode
-        * predictor don't explicity say why this is done, one
-        * can infer that it is to preserve the choice predictor's
-        * bias with respect to the branch being predicted; afterall,
-        * the whole point of the bi-mode predictor is to identify the
-        * atypical case when a branch deviates from its bias.
-        */
-        if (history->finalPred == history->takenUsed) {
-            if (taken) {
-                choiceCounters[choiceHistoryIdx]++;
-            } else {
-                choiceCounters[choiceHistoryIdx]--;
-            }
-        }
-    } else {
-        // always update the choice predictor on an incorrect prediction
+    /* Classic BiMode: on a correct prediction, only update choice when
+     * choice agrees with finalPred (preserve bias). Andes kv_ipipe always
+     * ±1s choice toward reso (unless saturated) — alwaysUpdateChoice. */
+    bool update_choice = alwaysUpdateChoice ||
+        (history->finalPred != taken) ||
+        (history->finalPred == history->takenUsed);
+    if (update_choice) {
         if (taken) {
             choiceCounters[choiceHistoryIdx]++;
         } else {

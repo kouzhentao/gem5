@@ -1,0 +1,3 @@
+FOCUS: P3-gem5-gap-map
+Status: nbload gap mapped (enableAndesNbloadHazard doc, ROB depth comment, rtl_rules refs). No gauge.
+Sat, 22 Aug 2026 18:55:00 +0800

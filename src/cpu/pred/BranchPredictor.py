@@ -119,6 +119,14 @@ class BTBSetAssociative(BTBIndexingPolicy):
     numThreads = Param.Unsigned(Parent.numThreads, "Number of threads")
 
 
+class AndesBTBSetAssociative(BTBSetAssociative):
+    """kv_bpu_ctrl: set = gf_hash_67(PC[14:1]), not a bit-slice index."""
+
+    type = "AndesBTBSetAssociative"
+    cxx_class = "gem5::AndesBTBSetAssociative"
+    cxx_header = "cpu/pred/andes_btb.hh"
+
+
 class SimpleBTB(BranchTargetBuffer):
     type = "SimpleBTB"
     cxx_class = "gem5::branch_prediction::SimpleBTB"
@@ -287,6 +295,15 @@ class BiModeBP(ConditionalPredictor):
     globalCtrBits = Param.Unsigned(2, "Bits per counter")
     choicePredictorSize = Param.Unsigned(8192, "Size of choice predictor")
     choiceCtrBits = Param.Unsigned(2, "Bits of choice counters")
+    # Andes kv_bpu: BHR updates only on cond BTB hits (not ucond/ret).
+    speculativeGHROnUncond = Param.Bool(
+        True, "Speculatively shift GHR for unconditional branches"
+    )
+    # Andes kv_ipipe WB BHT: always ±1 choice toward outcome (unless sat).
+    # Classic BiMode skips some correct-prediction choice updates.
+    alwaysUpdateChoice = Param.Bool(
+        False, "Always update choice counters toward branch outcome"
+    )
 
 
 class TAGEBase(SimObject):

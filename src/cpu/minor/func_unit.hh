@@ -163,6 +163,11 @@ class MinorFU : public SimObject
      *  end of the associated pipeline */
     Cycles opLat;
 
+    /** Cycles until destinations are scoreboard-ready / early-committable.
+     *  May be shorter than opLat (Andes late ALU: result at LX, pipe still
+     *  draining). When equal to opLat, behaviour matches classic Minor. */
+    Cycles resultLat;
+
     /** Delay after issuing an operation before the next
      *  operation can be issued */
     Cycles issueLat;
@@ -179,6 +184,8 @@ class MinorFU : public SimObject
         SimObject(params),
         opClasses(params.opClasses),
         opLat(params.opLat),
+        resultLat(params.resultLat == Cycles(0) ? params.opLat
+                                                : params.resultLat),
         issueLat(params.issueLat),
         cantForwardFromFUIndices(params.cantForwardFromFUIndices),
         timings(params.timings)
@@ -269,6 +276,11 @@ class FUPipeline : public FUPipelineBase, public FuncUnit
 
     /** Step the pipeline.  Allow multiple steps? */
     void advance();
+
+    /** Andes II/LX: replace a mid-pipe (or front) inst with a bubble so the
+     *  instruction can leave inFlight while occupancy drains. Returns true
+     *  if the seqNum was found. */
+    bool replaceInstWithBubble(InstSeqNum exec_seq_num);
 };
 
 } // namespace minor

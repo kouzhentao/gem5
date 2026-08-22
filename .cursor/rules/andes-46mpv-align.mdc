@@ -1,0 +1,44 @@
+---
+description: Andes AX46MPV CoreMark scalar RTL→gem5 alignment workflow (cfg→DS→RTL rules)
+alwaysApply: true
+---
+
+# Andes 46MPV scalar alignment (truth order)
+
+1. `/home/kou/gem5/cfg.txt` — numbers/switches (MSHR, SB, cache, BTB…)
+2. DS238 tables — load-use, dual-issue matrix, mul/div timing
+3. ucore RTL — structure + hazards only:
+
+- `docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_iiu_scb.v`
+- `docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ipipe.v`
+- `docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_lsu.v` + `kv_lsuop.v` + `kv_lsu_brg.v`
+- `docs/ax45mpv/andes_ip/kv_core/top/hdl/kv_core.v` — u_alu0..3 early/late
+
+Optional: `kv_bpu*.v`, `kv_mdu*`. **Never** use `andes_vip/.../ax45mpv_core_top` sample localparam as 46MPV source.
+
+# Per-signal rule format (mandatory)
+
+For each hazard/signal, append **exactly three lines** to `docs/andes_46mpv_rtl_rules.md`:
+
+- **When:** stage + opcode/FU condition
+- **Blocks / allows:** who stalls, who can dual-issue, bypass path
+- **gem5:** file/param/behavior; if missing → `known gap` (no opLat/BP/cache knob games)
+
+Example: `ii_*_late` → no EX bypass → LX ALU → gem5 early Int `cantForwardFrom` Mem; late uses EX `relativeLat`.
+
+# Gauge
+
+CoreMark ~6.3 CM/MHz is a **ruler only**. Do not tune for score. Path correct → score moves; blind tuning is invalid.
+
+# Agent loop (every wake tick)
+
+Read `ANDES_STATUS.txt` FOCUS + `ANDES_WORK_QUEUE.md` `NEXT`. Do **one** queue item:
+
+- RTL read → add ≥1 rule block to `andes_46mpv_rtl_rules.md` + tick queue
+- OR gem5 map for an existing rule → code + changelog row + optional gauge
+
+**Reply format:** first line must be `Status: <one-line summary>` — **not** `Loop tick #N`.
+
+**Forbidden on wake:** brief-only status, BP/cfg re-audit unless queue says so, `opLat`/`issueLimit` fake-wide, `gauge-hold` without queue progress.
+
+Always update `ANDES_STATUS.txt`, append `ANDES_STATUS.log`, set FOCUS to current queue id.

@@ -171,6 +171,41 @@ class ReturnAddrStack : public SimObject
     void squash(ThreadID tid, void * &ras_history);
 
     /**
+     * Andes II ras_ptr shadow: capture / restore full stack (depth small).
+     * Used to redirect FE RAS from Execute-issued decode state on mispredict
+     * (kv_ipipe redirect_ras_ptr → kv_bpu_ras).
+     */
+    struct StackSnapshot
+    {
+        unsigned tos = 0;
+        unsigned usedEntries = 0;
+        std::vector<std::unique_ptr<PCStateBase>> slots;
+        bool valid = false;
+
+        StackSnapshot() = default;
+        StackSnapshot(const StackSnapshot &o) { *this = o; }
+        StackSnapshot &operator=(const StackSnapshot &o)
+        {
+            if (this == &o)
+                return *this;
+            tos = o.tos;
+            usedEntries = o.usedEntries;
+            valid = o.valid;
+            slots.resize(o.slots.size());
+            for (size_t i = 0; i < o.slots.size(); ++i) {
+                if (o.slots[i])
+                    set(slots[i], o.slots[i].get());
+                else
+                    slots[i].reset();
+            }
+            return *this;
+        }
+    };
+
+    void captureSnapshot(ThreadID tid, StackSnapshot &snap) const;
+    void restoreSnapshot(ThreadID tid, const StackSnapshot &snap);
+
+    /**
      * A branch got finally got finally commited.
      * @param misp Whether the branch was mispredicted.
      * @param brType The type of the branch.
@@ -192,8 +227,13 @@ class ReturnAddrStack : public SimObject
         bool wasCall = false;
         /** The entry that poped from the RAS (only valid if a return). */
         std::unique_ptr<PCStateBase> ras_entry;
-        /** The RAS index (top of stack pointer) of the instruction */
+        /** TOS / usedEntries *before* pop (exact squash restore). */
         unsigned tos = 0;
+        unsigned usedEntries = 0;
+        /** Pre-push snapshot (separate: same hist may pop then push). */
+        unsigned pushTos = 0;
+        unsigned pushUsedEntries = 0;
+        std::unique_ptr<PCStateBase> pushOverwritten;
     };
 
     void makeRASHistory(void* &ras_history);

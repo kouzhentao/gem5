@@ -981,7 +981,9 @@ ExecuteCPUStats::ExecuteCPUStats(statistics::Group *parent, int thread_id)
              "Number of times the vector registers were written"),
     ADD_STAT(numDiscardedOps, statistics::units::Count::get(),
              "Number of ops (including micro ops) which were discarded before "
-             "commit")
+             "commit"),
+    ADD_STAT(andesIiLxEarlyCommits, statistics::units::Count::get(),
+             "Andes II/LX early commits (result ready before FU exit)")
 {
     numStoreInsts = numMemRefs - numLoadInsts;
 
