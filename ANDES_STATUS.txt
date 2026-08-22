@@ -1,4 +1,4 @@
-FOCUS: P3-exlx-impl (blocked)
-Status: scalar rebased on upstream/stable; execute.o builds OK. Awaiting exlx approach. BM 3.293.
+FOCUS: P3-exlx-impl (blocked — pick A/B/C)
+Status: exlx-pick options A/B/C in rtl_rules.md. User choice unblocks impl. BM 3.293.
+Sat, 22 Aug 2026 19:30:00 +0800
 Handoff: clone git@github.com:kouzhentao/gem5.git branch scalar; read ANDES_WORK_QUEUE.md NEXT; chat history not synced.
-Sat, 22 Aug 2026 19:25:00 +0800
