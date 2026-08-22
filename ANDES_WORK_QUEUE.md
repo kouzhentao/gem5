@@ -6,7 +6,8 @@ Tick contract: complete **one** row below, or implement gem5 for an existing rul
 
 | id | block | action |
 |----|-------|--------|
-| **P3-gem5-gap-map** | gem5 | **done** — gap audit complete; EX∥LX needs new stage model |
+| **P3-exlx-design** | gem5 design | **done** — fix requirements in `rtl_rules.md` (exlx-design); impl frozen |
+| **P3-exlx-impl** | gem5 | Stage-tagged occupancy redesign — **blocked** until user picks approach |
 
 ### P3-gem5-ex-lx sub-steps (in order)
 

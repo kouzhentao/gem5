@@ -123,3 +123,9 @@ One block per signal/hazard. Source priority: cfg.txt → DS238 → ucore RTL.
 - **When:** Any II issue of Int/BR on late path (`andesLatePath` / `IntLate` FU 2–3) while another early Int could issue to FU 0–1 same cycle; or late producer still in MM/LX pipe but RTL would still dual-issue.
 - **Blocks / allows:** RTL: issue width 2 decoupled from LX alu2/3 busy (stage tag). Minor: (a) `FUPipeline::alreadyPushed()`/`canInsert()` — one inst per FU pipe, no EX/LX tag; (b) `Scoreboard::canInstIssue` — `returnCycle` + `srcRegsRelativeLats`/`cantForwardFrom`, not pipe stage; (c) strict in-order issue loop — i0 fail blocks i1 (`execute.cc` ~680–684).
 - **gem5:** `AndesFUPool` 4×Int (0–1 early, 2–3 late) + `andesIntShouldUseLateFU`/`andesLatePath` — **route approx only**. `Scoreboard::canInstIssue` (`returnCycle`, `srcRegsRelativeLats`, `cantForwardFrom`) ≠ stage tag; `enableAndesStageOccupancy` **frozen** — **known gap** (`andes_46mpv_scalar.py` comment).
+
+## EX∥LX fix requirements — design only (`exlx-design`, no impl)
+
+- **When:** Any cycle where RTL would dual-issue early+late Int while LX alu2/3 still holds an older late op (MM pipe delay) and EX alu0/1 runs a younger early op same cycle.
+- **Blocks / allows:** Fix must (1) tag occupancy by **stage** (EX vs LX), not FU `opLat`; (2) late issued @II frees early FU same cycle; (3) not block `inFlight` commit/activity (`exlx-3b/3c deadlocked at 16 inst); (4) keep `opLat=1`, no `resultLat` games.
+- **gem5:** Needs new mechanism beyond `minimumCommitCycle`/`andesLxStageHolds` or pending queue — e.g. decouple FU push from stage slot + separate LX retire tick. **Frozen until design chosen**; BM ruler ~3.293 @ `enableAndesStageOccupancy=False`.
