@@ -313,3 +313,5 @@ direction_accuracy = 1 - condIncorrect / condPredicted
 | 2026-08-21 | alignment-hold：PMA misaligned=DRAM（UNALIGNED=yes）；CM 无杠杆 | — | — | — | **3.293** |
 | 2026-08-21 | warmup TimingCPU pmp_entries=4（cfg 齐）；CM 不变 | — | — | — | **3.293** |
 | 2026-08-22 | gap-map nbload: param doc + ROB depth comment; rtl_rules↔gem5 refs | — | — | — | no gauge |
+| 2026-08-22 | gap-map bypass mux + ls_base: ANDES_BYPASS_* comment, AndesMemFU doc | — | — | — | no gauge |
+| 2026-08-22 | gap-map EX∥LX/scoreboard: frozen stage params doc; exlx-2 rtl↔gem5 | — | — | — | no gauge |

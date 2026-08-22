@@ -450,13 +450,16 @@ class BaseMinorCPU(BaseCPU):
     )
     enableAndesIiLxOverlap = Param.Bool(
         False,
-        "Andes II/LX: resultLat vs opLat split; allow in-order head commit "
-        "when late result ready while FU keeps bubble occupancy",
+        "Andes II/LX (rtl_rules EX∥LX): resultLat vs opLat split for late Int "
+        "commit while FU holds bubble. FROZEN — prior trials no CM gain; "
+        "not a substitute for stage-tagged occupancy. Keep False.",
     )
     enableAndesStageOccupancy = Param.Bool(
         False,
-        "Andes II→LX: defer late Int to LX stage queue; early FU 0-1 issue "
-        "while late holds pipe slots (opLat stays 1cy)",
+        "Andes II→LX stage model (exlx-3c execute.cc): minimumCommitCycle + "
+        "andesLxStageHolds for late Int; early FU 0-1 may issue in parallel. "
+        "FROZEN — exlx-3b/3c deadlock at 16 inst; BM off. Needs new design, "
+        "not opLat. Scoreboard returnCycle ≠ pipe-stage tag (exlx-2 gap).",
     )
     andesLxStageDepth = Param.Cycles(
         3,

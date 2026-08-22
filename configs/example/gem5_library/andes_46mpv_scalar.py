@@ -45,7 +45,10 @@ ANDES_LSU_ROB_DEPTH = 3          # kv_lsu_rob DEPTH
 ANDES_WBF_DEPTH = 2              # kv_dcu: CM_SUPPORT=no → DCACHE_WBF_DEPTH=2 (not in cfg)
 ANDES_DPF_QUEUE = 4              # PF queue (structure; entries from cfg)
 # Minor srcRegsRelativeLats: HIGHER = earlier issue while producer in-flight.
-# RTL EX earlier than MM → EX relativeLat > MM. ls_base forces EX off (lat=0).
+# RTL II mux bits [1-2]=EX, [3-4]=MM, [5-6]=LX, [7-8]=WB (kv_ipipe L3466-3469).
+# gem5 collapses to scalar lats — not per-bit s188/s191; tune only via rules.
+# ANDES_BYPASS_EX=3: ~EX visible at II; ANDES_BYPASS_MM=1: ~MM (tried on Mem
+# addr → gauge 3.30→3.21; reverted — Minor cannot ban-EX-only like ls_base).
 ANDES_BYPASS_EX = 3
 ANDES_BYPASS_MM = 1
 
@@ -157,8 +160,9 @@ class AndesMemFU(MinorDefaultMemFU):
 
     ex_ls_loadb (kv_ipipe): aligned LW/LD(/LWU) → extraAssumedLat=1.
     LB/LH (~loadb): DS169 +1cy → extraAssumedLat=2; not same-cycle late dual-issue.
-    ls_base: EX match forced 0; MM load OK. gem5 addr lat=0 (conservative;
-    tried BYPASS_MM=1 → gauge 3.30→3.21, cannot ban EX-only in Minor).
+    ls_base: EX match forced 0; MM load OK. gem5: all Mem srcRegsRelativeLats=[0]
+    (conservative — must be ready at issue; no EX-only ban in Minor scoreboard).
+    Gap: ls_resp_bresult replay (bit2) unmodeled — see rtl_rules LS base bypass.
     """
 
     opClasses = minorMakeOpClassSet(
@@ -486,12 +490,10 @@ def apply_andes_scalar_cpu(cpu) -> None:
     # enableAndesNbloadHazard + loadb same-cycle + ROB depth above; gaps in
     # BaseMinorCPU.enableAndesNbloadHazard doc / rtl_rules nbload_* blocks.
     cpu.enableAndesNbloadHazard = ANDES_NON_BLOCKING_LOAD
-    # Late ALU is 1cy (same as early); do not fake multi-cycle opLat.
-    # II/LX overlap ≠ longer ALU — enableAndesIiLxOverlap stays off until
-    # real pipe-control model exists (not opLat games).
+    # EX∥LX / scoreboard gap (rtl_rules exlx-2): Minor uses returnCycle +
+    # srcRegsRelativeLats, not EX/LX stage tags. Prototypes below FROZEN.
     cpu.enableAndesIiLxOverlap = False
-    # exlx-3: II→LX stage queue prototype — off until exlx-4 gauge.
-    cpu.enableAndesStageOccupancy = False
+    cpu.enableAndesStageOccupancy = False  # exlx-3c deadlock; see BaseMinorCPU doc
     cpu.andesLxStageDepth = 3
     cpu.andesLxStageSlots = 2
     # DS238 §22.8: 5cy EX / 7cy LX on true mispredict only (see execute.cc).

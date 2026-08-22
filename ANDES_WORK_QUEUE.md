@@ -6,7 +6,7 @@ Tick contract: complete **one** row below, or implement gem5 for an existing rul
 
 | id | block | action |
 |----|-------|--------|
-| **P3-gem5-gap-map** | gem5 | Map one `known gap` rule → param/code note (no gauge) — **next: LS base / bypass mux** |
+| **P3-gem5-gap-map** | gem5 | **done** — gap audit complete; EX∥LX needs new stage model |
 
 ### P3-gem5-ex-lx sub-steps (in order)
 

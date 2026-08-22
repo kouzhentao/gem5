@@ -1,3 +1,3 @@
-FOCUS: P3-gem5-gap-map
-Status: nbload gap mapped (enableAndesNbloadHazard doc, ROB depth comment, rtl_rules refs). No gauge.
-Sat, 22 Aug 2026 18:55:00 +0800
+FOCUS: P3-gem5-gap-map (done)
+Status: EX∥LX/scoreboard gap mapped; stage occupancy frozen. Gap audit complete. BM 3.293.
+Sat, 22 Aug 2026 19:05:00 +0800

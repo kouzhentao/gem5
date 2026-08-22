@@ -32,13 +32,13 @@ One block per signal/hazard. Source priority: cfg.txt → DS238 → ucore RTL.
 
 - **When:** At II, each src regfile read muxes: `[0]` RF, `[1–2]` EX rd1/rd2, `[3–4]` MM rd1/rd2, `[5–6]` LX rd1/rd2, `[7–8]` WB rd1/rd2; rs2/rs4 use `ii_i0/i1_bypass[9–17]` (same stage order); bypass select from `ii_i0/i1_mm_bypass` (`s188/s191/s194/s197`) per producer type.
 - **Blocks / allows:** EX-stage producers visible to II when `mm_bypass` bit0=1 (early path); `~bit[0]` → late/LX path (see `ii_*_late`); enables dual-issue RAW resolve without stall when mux hits.
-- **gem5:** `srcRegsRelativeLats` (`ANDES_BYPASS_EX=3`, `ANDES_BYPASS_MM=1`) + `cantForwardFrom` on early Int — **approx** EX/MM/LX/WB depth; no per-bit mux model — **known gap**.
+- **gem5:** `AndesIntFU`/`AndesLateIntFU` `srcRegsRelativeLats=[ANDES_BYPASS_EX]` (`andes_46mpv_scalar.py`); `cantForwardFrom` [2–3,4,5,7,8] ≈ `~bit[0]` — **approx**; no per-stage mux bits — **known gap** (no `opLat` knob).
 
 ## LS address base bypass (`kv_ipipe.v` L6337 + `kv_iiu_scb.v` L740–741, `kv_iiu.v` L821)
 
 - **When:** Load/store at EX: `ls_req_base` muxes `ex_src1_reg` (bit0), `ex_src3_reg` (bit1), or `ls_resp_bresult` (bit2, nbload replay); `ii_i0/i1_ls_base_bypass` **blocks EX** producer (`rs*_match_ex_rd*` → 0) — base must come from MM+ or registered EX src.
 - **Blocks / allows:** LS base cannot forward from same-cycle EX ALU result; MM/LX/WB base bypass via `s77/s78`; i0 vs i1 slot encoded in `ii_ls_base_bypass[2:0]`.
-- **gem5:** MemFU `srcRegsRelativeLats=[0]` on base reg (no EX bypass) — **aligned intent**; `ls_resp_bresult` replay path — **known gap** (nbload).
+- **gem5:** `AndesMemFU` all load/store timings `srcRegsRelativeLats=[0]` — **aligned intent** (no EX fwd on base); `ls_resp_bresult` bit2 — **known gap** (`AndesMemFU` docstring).
 
 ## i1 load-consumer EX vs LX bypass (`kv_iiu_scb.v` L754–764, `kv_ipipe.v` loadb path)
 
@@ -116,10 +116,10 @@ One block per signal/hazard. Source priority: cfg.txt → DS238 → ucore RTL.
 
 - **When:** Each cycle at II: up to 2 ops issue; older **late** ops compute at LX (alu2/3) while younger **early** ops compute at EX (alu0/1) — 4 ALUs busy, issue width still 2.
 - **Blocks / allows:** Late does not block II width once issued; occupancy is pipe-stage tagged (EX vs LX), not FU-depth tagged.
-- **gem5:** `enableAndesStageOccupancy` — late Int uses `minimumCommitCycle` + `andesLxStageHolds` (`execute.cc`) — **exlx-3c gauge: deadlock** (16 inst/5.5B ticks); pending (`exlx-3b`) also deadlocked; BM **off** (`enableAndesStageOccupancy=False`).
+- **gem5:** `enableAndesStageOccupancy=False` (**frozen**, `BaseMinorCPU.py`); prototypes `minimumCommitCycle`+`andesLxStageHolds` deadlocked (exlx-3c). **Primary CM gap.**
 
 ## Minor gap map — scoreboard ≠ stage occupancy (`exlx-2`, `execute.cc` + `scoreboard.cc`)
 
 - **When:** Any II issue of Int/BR on late path (`andesLatePath` / `IntLate` FU 2–3) while another early Int could issue to FU 0–1 same cycle; or late producer still in MM/LX pipe but RTL would still dual-issue.
 - **Blocks / allows:** RTL: issue width 2 decoupled from LX alu2/3 busy (stage tag). Minor: (a) `FUPipeline::alreadyPushed()`/`canInsert()` — one inst per FU pipe, no EX/LX tag; (b) `Scoreboard::canInstIssue` — `returnCycle` + `srcRegsRelativeLats`/`cantForwardFrom`, not pipe stage; (c) strict in-order issue loop — i0 fail blocks i1 (`execute.cc` ~680–684).
-- **gem5:** `AndesFUPool` 4× Int FU (0–1 early, 2–3 late) + `andesIntShouldUseLateFU` routes op class only — **approx route, not stage model**. Fix target (`exlx-3`): `andesStageOccupancy` — late issued @II occupies LX slot across MM delay without blocking early FU 0–1 or `issueLimit`; keep `opLat=1`, `enableAndesIiLxOverlap=False`.
+- **gem5:** `AndesFUPool` 4×Int (0–1 early, 2–3 late) + `andesIntShouldUseLateFU`/`andesLatePath` — **route approx only**. `Scoreboard::canInstIssue` (`returnCycle`, `srcRegsRelativeLats`, `cantForwardFrom`) ≠ stage tag; `enableAndesStageOccupancy` **frozen** — **known gap** (`andes_46mpv_scalar.py` comment).
