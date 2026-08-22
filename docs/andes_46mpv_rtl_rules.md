@@ -129,3 +129,21 @@ One block per signal/hazard. Source priority: cfg.txt → DS238 → ucore RTL.
 - **When:** Any cycle where RTL would dual-issue early+late Int while LX alu2/3 still holds an older late op (MM pipe delay) and EX alu0/1 runs a younger early op same cycle.
 - **Blocks / allows:** Fix must (1) tag occupancy by **stage** (EX vs LX), not FU `opLat`; (2) late issued @II frees early FU same cycle; (3) not block `inFlight` commit/activity (`exlx-3b/3c deadlocked at 16 inst); (4) keep `opLat=1`, no `resultLat` games.
 - **gem5:** Needs new mechanism beyond `minimumCommitCycle`/`andesLxStageHolds` or pending queue — e.g. decouple FU push from stage slot + separate LX retire tick. **Frozen until design chosen**; BM ruler ~3.293 @ `enableAndesStageOccupancy=False`.
+
+## exlx-approach-A — virtual LX slot counter (`exlx-pick`)
+
+- **When:** Late Int issued @II; RTL LX alu2/3 busy for `andesLxStageDepth` cycles independent of `FUPipeline::canInsert` on FU 2–3.
+- **Blocks / allows:** Issue uses **counter** `andesLxStageHolds` only (no `minimumCommitCycle` on commit); late still `fu->push` immediately; early FU 0–1 unchecked against late FU pipe busy.
+- **gem5:** Extend `execute.cc` slot prune; **avoid** commit stall hooks (exlx-3c failure mode). **Candidate** if user picks A.
+
+## exlx-approach-B — split late execute tick (`exlx-pick`)
+
+- **When:** Late Int: issue @II marks `andesLatePath` + schedules LX ALU eval at `now+depth` without holding FU bubble across depth.
+- **Blocks / allows:** FU 2–3 `opLat=1` only on execute cycle; between issue and LX execute, inst lives in side queue **not** `inFlightInsts` head stall.
+- **gem5:** New `andesLxDeferred` queue drained before issue; larger `execute.cc` change. **Candidate** if user picks B.
+
+## exlx-approach-C — hold gap, no impl (`exlx-pick`)
+
+- **When:** CM scalar ruler only; accept ~3.29 vs ~6.3 until Minor gets stage tags upstream.
+- **Blocks / allows:** No further exlx prototypes; document scoreboard approx as permanent for this project.
+- **gem5:** `enableAndesStageOccupancy=False` frozen. **Default** if A/B not requested.

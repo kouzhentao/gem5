@@ -42,3 +42,17 @@ Read `ANDES_STATUS.txt` FOCUS + `ANDES_WORK_QUEUE.md` `NEXT`. Do **one** queue i
 **Forbidden on wake:** brief-only status, BP/cfg re-audit unless queue says so, `opLat`/`issueLimit` fake-wide, `gauge-hold` without queue progress.
 
 Always update `ANDES_STATUS.txt`, append `ANDES_STATUS.log`, set FOCUS to current queue id.
+
+# Git sync (`scalar` branch)
+
+After each tick (or any alignment edit), **commit + push** tracked handoff files to `origin/scalar`:
+
+- `ANDES_STATUS.txt`, `ANDES_WORK_QUEUE.md`
+- `docs/andes_46mpv_rtl_rules.md`, `docs/andes_46mpv_gem5_changes.md`
+- gem5/config/src changes on the same task
+
+Do **not** commit: `m5out*`, `coremark_*.log`, `build_*.log`, RTL tarballs (`docs/ax45mpv.tar*`), `benchmarks/*.elf`.
+
+```bash
+git add <paths> && git -c user.email=kouzhentao@163.com -c user.name=kouzhentao commit -m "..." && git push origin scalar
+```
