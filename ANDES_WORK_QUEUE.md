@@ -23,6 +23,14 @@ Tick contract: complete **one** row below, or implement gem5 for an existing rul
 | exlx-3c | Redesign: `minimumCommitCycle` + LX slot holds (no pending queue) | done — **deadlock** (16 inst); BM off |
 | exlx-freeze | Stage-occupancy prototypes frozen until Minor stage model rethink | frozen → P3-ipipe-bypass |
 
+### exlx-A impl sketch (if user picks A)
+
+| step | action |
+|------|--------|
+| exlx-A1 | Strip `minimumCommitCycle` / `head_inst_might_commit` hooks from late path (`execute.cc` L968–969, L1592, L1881) |
+| exlx-A2 | Keep `andesLxStageHolds` + slot block @ issue only (`L851–852`); late always `fu->push` |
+| exlx-A3 | Gauge once; if deadlock → revert, try B |
+
 ## P1 cfg.txt (verify → rule if missing)
 
 | id | status | notes |
