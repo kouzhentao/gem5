@@ -82,25 +82,31 @@
 
 ## 数据通路 vs 控制通路
 
-```mermaid
-flowchart LR
-  subgraph data [数据通路]
-    PC[PC/NPC] --> INSTR[instr 32b]
-    INSTR --> CTRL[ctrl 375b]
-    CTRL --> SRC[ii_src1..4 64b]
-    SRC --> EXREG[ex_src*_reg]
-    EXREG --> ALU0[alu0/1 @EX]
-    EXREG --> MMREG[mm_src*_reg]
-    MMREG --> LXREG[lx_src*_reg]
-    LXREG --> ALU2[alu2/3 @LX]
-  end
-  subgraph ctrl [控制通路]
-  HAZ[kv_iiu_scb hazard] --> STALL[ii_*_stall]
-  STALL --> IIQ
-  MISPRED[mm_i0_mispred] --> REDIR[mm_redirect]
-  REDIR --> FLUSH[iiq_flush / kill]
-  LXSTALL[lx_stall] --> PIPE[停 II..LX]
-  end
+```
+  数据通路                                    控制通路
+  ────────                                    ────────
+
+  PC/NPC                                      kv_iiu_scb hazard
+     │                                              │
+     ▼                                              ▼
+  instr 32b                                   ii_*_stall ──▶ IIQ
+     │                                              │
+     ▼                                         mm_i0_mispred
+  ctrl 375b                                           │
+     │                                                ▼
+     ▼                                          mm_redirect
+  ii_src1..4 64b                                        │
+     │                                                ▼
+     ▼                                          iiq_flush / kill
+  ex_src*_reg
+     ├──────────────────▶ alu0/1 @EX
+     ▼
+  mm_src*_reg
+     ▼
+  lx_src*_reg
+     └──────────────────▶ alu2/3 @LX
+
+                                              lx_stall ──▶ 停 II..LX
 ```
 
 - **数据：** `instr` → `id_ctrl` → `ii_ctrl` → `ex/mm/lx/wb_ctrl` 随指令走；操作数 `ii_src*` → `ex_src*_reg` → `mm_src*_reg` → `lx_src*_reg`。
