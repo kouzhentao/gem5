@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 200">
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+  <path d="M0,0 L8,4 L0,8 Z" fill="#475569"/>
+</marker>
+<style>
+  text { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; fill: #1e293b; }
+  .sans { font-family: system-ui, -apple-system, sans-serif; }
+  .title { font-size: 14px; font-weight: 600; fill: #0f172a; }
+  .hdr { fill: #475569; font-weight: 600; font-size: 11px; }
+  .row { fill: #64748b; font-weight: 600; font-size: 11px; }
+  .box { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.2; }
+  .panel { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; }
+  .blue { fill: #eff6ff; stroke: #3b82f6; }
+  .orange { fill: #fff7ed; stroke: #f97316; }
+  .green { fill: #ecfdf5; stroke: #10b981; }
+  .cell { fill: #f8fafc; stroke: #e2e8f0; stroke-width: 1; }
+  .cell-hi { fill: #dbeafe; stroke: #93c5fd; stroke-width: 1; }
+  .cell-stall { fill: #fef3c7; stroke: #fbbf24; stroke-width: 1; }
+  .arrow { stroke: #475569; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+</style></defs>
+<text class="title sans" x="550" y="22" text-anchor="middle">标量后端概览（左 → 右）</text>
+<rect class="blue" x="40" y="50" width="100" height="56" rx="6"/>
+<text x="90.0" y="75.0" text-anchor="middle" font-size="10">取指</text>
+<text x="90.0" y="89.0" text-anchor="middle" font-size="10">f0→f1→f2→FQ</text>
+<line class="arrow" x1="140" y1="78" x2="156" y2="78"/>
+<rect class="box" x="160" y="50" width="80" height="56" rx="6"/>
+<text x="200.0" y="75.0" text-anchor="middle" font-size="10">译码</text>
+<text x="200.0" y="89.0" text-anchor="middle" font-size="10">id_*</text>
+<line class="arrow" x1="240" y1="78" x2="256" y2="78"/>
+<rect class="green" x="260" y="50" width="50" height="56" rx="6"/>
+<text x="285.0" y="82.0" text-anchor="middle" font-size="10">IIQ</text>
+<line class="arrow" x1="310" y1="78" x2="326" y2="78"/>
+<rect class="box" x="330" y="50" width="80" height="56" rx="6"/>
+<text x="370.0" y="75.0" text-anchor="middle" font-size="10">发射</text>
+<text x="370.0" y="89.0" text-anchor="middle" font-size="10">ii_*</text>
+<line class="arrow" x1="410" y1="78" x2="426" y2="78"/>
+<rect class="blue" x="430" y="50" width="70" height="56" rx="6"/>
+<text x="465.0" y="75.0" text-anchor="middle" font-size="10">EX</text>
+<text x="465.0" y="89.0" text-anchor="middle" font-size="10">ex_*</text>
+<line class="arrow" x1="500" y1="78" x2="516" y2="78"/>
+<rect class="box" x="520" y="50" width="70" height="56" rx="6"/>
+<text x="555.0" y="75.0" text-anchor="middle" font-size="10">MM</text>
+<text x="555.0" y="89.0" text-anchor="middle" font-size="10">mm_*</text>
+<line class="arrow" x1="590" y1="78" x2="606" y2="78"/>
+<rect class="blue" x="610" y="50" width="70" height="56" rx="6"/>
+<text x="645.0" y="75.0" text-anchor="middle" font-size="10">LX</text>
+<text x="645.0" y="89.0" text-anchor="middle" font-size="10">lx_*</text>
+<line class="arrow" x1="680" y1="78" x2="696" y2="78"/>
+<rect class="green" x="700" y="50" width="70" height="56" rx="6"/>
+<text x="735.0" y="75.0" text-anchor="middle" font-size="10">WB</text>
+<text x="735.0" y="89.0" text-anchor="middle" font-size="10">wb_*</text>
+<rect class="orange" x="820" y="40" width="80" height="40" rx="6"/>
+<text x="860.0" y="64.0" text-anchor="middle" font-size="9">kv_lsu</text>
+<rect class="orange" x="820" y="90" width="80" height="40" rx="6"/>
+<text x="860.0" y="114.0" text-anchor="middle" font-size="9">kv_mdu</text>
+<line class="arrow" x1="500" y1="60" x2="820" y2="60"/>
+<text x="530" y="56" font-size="8">ls/mdu req</text>
+<rect class="orange" x="920" y="40" width="100" height="40" rx="6"/>
+<text x="970.0" y="57.0" text-anchor="middle" font-size="9">kv_bpu</text>
+<text x="970.0" y="71.0" text-anchor="middle" font-size="9">← mm update</text>
+<line class="arrow" x1="770" y1="130" x2="920" y2="130"/>
+<text x="800" y="138" font-size="8">mm_redirect → 取指</text>
+</svg>

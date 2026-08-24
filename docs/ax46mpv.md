@@ -10,8 +10,8 @@
 
 | 级 | 名称 | RTL 前缀 | 主模块 | posedge 边界 |
 |----|------|----------|--------|--------------|
-| 1 | **IF** | `f0`, `f1` | `kv_ifu` | VA/PA、发 I$/ILM 请求 |
-| 2 | **IC** | `f2` → **FQ(4)** | `kv_ifu`, `kv_fq` | 取指返回、入队（双宽 FIFO） |
+| 1 | **IF** | `f0`, `f1` | `kv_ifu`, `kv_pq`, `kv_bpu` | `f0_pc`/`target_pc` → `req_addr`；ITLB → `f1_pa`；发 ICU/ILM |
+| 2 | **IC** | `f2` → **FQ(4)** | `kv_ifu`, `kv_icu`, `kv_fq` | 等 I$/ILM 返回；RVC 对齐；`fq_wr` |
 | 3 | **ID** | `id_*`, `ifd_*` | `kv_dec`, `kv_uins_ctl` | 译码；push **IIQ(4)** |
 | 4 | **IS** | `ii_*` | `kv_iiq_wrap`, `kv_iiu`, `kv_iiu_scb` | pop IIQ；发射、冒险 |
 | 5 | **EX** | `ex_*` | `kv_ipipe` | early 执行、LS/MDU 发起 |
@@ -23,140 +23,66 @@
 
 ## 硬件框图
 
-```
-                         ┌────────── kv_bpu ──────────┐
-                         │ BTB/BHT/RAS → pred_npc    │
-                         └────────────┬──────────────┘
-                                      │ pred_taken, pred_npc
-  ILM / ICU(I$)                         ▼
-      ▲                    ┌─────────────────────────────┐
-      │  icu/ilm resp      │  S1 IF          S2 IC       │
-      └────────────────────│  f0 → f1(ITLB) → f2 → FQ(4)│
-                           └──────────┬──────────────────┘
-                                      │ ifu_i0/i1 (双路)
-                                      ▼
-                           ┌─────────────────────────────┐
-                           │  S3 ID   kv_dec (组合)       │
-                           │          kv_uins_ctl        │
-                           └──────────┬──────────────────┘
-                                      │ id_ready
-                                      ▼
-                           ┌─────────────────────────────┐
-                           │  IIQ(4) FIFO                 │
-                           └──────────┬──────────────────┘
-                                      ▼
-                           ┌─────────────────────────────┐
-                           │  S4 IS   kv_iiu + kv_iiu_scb │
-                           │  XRF/FRF读 + bypass + hazard │
-                           └──────────┬──────────────────┘
-                                      │ ii_src1..4, ctrl
-          ┌───────────────────────────┼───────────────────────────┐
-          ▼                           ▼                           ▼
-   ┌─────────────┐            ┌─────────────┐              ┌─────────────┐
-   │ S5 EX       │            │ kv_lsu      │              │ kv_mdu      │
-   │ alu0/1      │──ls_req───▶│ (EX 入队)   │──ls_resp────▶│ EX req      │
-   │ bru0/1      │            └─────────────┘              │ LX resp     │
-   │ bitmanip0   │                                          └─────────────┘
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐     mm_redirect ──▶ IFU redirect_pc
-   │ S6 MM       │     mm_btb_update ─▶ kv_bpu
-   │ 分支误判     │
-   │ load 快路径  │
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │ S7 LX       │◀── lx_stall（全局后端停）
-   │ alu2/3      │
-   │ bru2/3      │
-   │ ls/mdu/csr  │
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │ S8 WB       │──▶ XRF/FRF we
-   │ kv_cmt退休  │
-   └─────────────┘
-```
+![流水线硬件框图](ax46mpv/block.svg)
 
 ---
 
 ## 数据通路 vs 控制通路
 
-```
-  数据通路                                    控制通路
-  ────────                                    ────────
-
-  PC/NPC                                      kv_iiu_scb hazard
-     │                                              │
-     ▼                                              ▼
-  instr 32b                                   ii_*_stall ──▶ IIQ
-     │                                              │
-     ▼                                         mm_i0_mispred
-  ctrl 375b                                           │
-     │                                                ▼
-     ▼                                          mm_redirect
-  ii_src1..4 64b                                        │
-     │                                                ▼
-     ▼                                          iiq_flush / kill
-  ex_src*_reg
-     ├──────────────────▶ alu0/1 @EX
-     ▼
-  mm_src*_reg
-     ▼
-  lx_src*_reg
-     └──────────────────▶ alu2/3 @LX
-
-                                              lx_stall ──▶ 停 II..LX
-```
+![数据通路 vs 控制通路](ax46mpv/data-ctrl.svg)
 
 - **数据：** `instr` → `id_ctrl` → `ii_ctrl` → `ex/mm/lx/wb_ctrl` 随指令走；操作数 `ii_src*` → `ex_src*_reg` → `mm_src*_reg` → `lx_src*_reg`。
 - **控制：** `kv_iiu_scb` 在 IS 级产生 `stall`/`bypass`/`late`；`mm_redirect`/`wb_kill` 在 MM/WB 级 flush；`lx_stall` 冻结 II→LX 全部流水寄存器。
 
 ---
 
-## S1 — IF（取指地址）
+## S1 — IF（取指地址：`f0` → `f1`）
 
-**文件：** `kv_ifu.v`  
-**寄存器：** `f0_valid`, `f0_pc`, `f0_bblk_start` → `f1_valid`, `f1_va`, `f1_pa`
+取指在 `kv_ifu` 内有 **两个 posedge 寄存器级**（`f0_*`、`f1_*`），外加组合级的 PC 选择；不是「`f0`/`f1` 之间无寄存器」。
 
-| 动作 | 实现 |
-|------|------|
-| 下一 PC | redirect 用 `redirect_pc`；正常用 BPU `target_pc`；resume/retry 单独路径 |
-| 发请求 | `f1_valid` 成立后选 ILM（`ifu_ilm_req_*`）或 ICU（`ifu_icu_req_*`） |
-| ITLB | `ifu_itlb_req_valid` / `ifu_mmu_req_valid`，miss 进 `ST_FILL_TLB` FSM |
-| 背压 | `ipipe_ifu_stall`、`fq_full_stall`、`fetch_stall` |
+![取指通路](ax46mpv/fetch.svg)
 
-**输出到 S2：** `f1` 推进为 `f2`（`f2_valid_nx = f1_valid & ~f2_kill`）。
+### next PC 怎么来
+
+| 信号 | 来源 | 含义 |
+|------|------|------|
+| `target_pc` | `kv_pq` | 下一 bundle 起始 VA（8 字节对齐块） |
+| `seq_pc` | `kv_ifu` | 顺序前进：`req_addr[MSB:3] + 8`（一次 issue 推进 8B，不是单条 +4） |
+| `redirect_pc` | `kv_ipipe` | 分支误判 / trap / resume 改向 |
+| `f0_pc` | `kv_ifu` | 多拍占用时锁住的 PC（redirect 等 BPU、recover、prefetch、EX9…） |
+
+**`target_pc` MUX（`kv_pq`）：** BTB 命中 → `bpu_info_target`；基本块内 fall-through / latched target；否则 → `seq_pc`。
+
+**`req_addr` MUX（`kv_ifu`）：** `redirect` → `redirect_pc`；`f0_valid` → `f0_pc`；否则 → `target_pc`。
+
+**BPU（`kv_bpu` + `kv_pq`）：** 对当前 fetch PC 发 `bpu_rd_valid` 读 BTB；BHT 给 `bpu_info_pred_taken`；RAS 给 return 目标；`redirect` 时 `redirect_ras_ptr` 修栈。预测结果进 `kv_pq` 基本块队列，并输出 `ifu_i0/i1_pred_npc` 随 FQ 下发。
+
+### 每一拍干什么
+
+| 级 | 寄存器 | 本拍动作 |
+|----|--------|----------|
+| **组合** | — | `kv_pq`/`kv_bpu` 算 `target_pc`；`req_addr` MUX 选址；`req_valid` 请求 ICU/ILM |
+| **`f0`** | `f0_pc`, `f0_valid`, `f0_bblk_start` | redirect 等 BPU ready、recover、prefetch 等路径置 `f0_valid`，PC 锁在 `f0_pc`；issue 后 `f0_valid` 清 |
+| **`f1`** | `f1_va`, `f1_valid`, `f1_req_*` | `fetch_issue`（=`req_valid & req_ready`）时 `f1_va ← req_addr`；非 ILM 且 MMU 开 → ITLB 查 `f1_va` 得 `f1_pa`；ILM 命中走 `ifu_ilm_req_*`（无 ITLB） |
+| **背压** | — | `ipipe_ifu_stall`、`fq_full_stall`、`fetch_stall`；`~bpu_rd_ready` 可挡 redirect-for-CTI |
+
+**`f1` → `f2`：** `f2_valid ← f1_valid & ~f2_kill`（见 S2）。
 
 ---
 
-## S2 — IC（取指数据）
+## S2 — IC（取指数据：`f2` → FQ）
 
-**文件：** `kv_ifu.v`, `kv_fq`  
-**寄存器：** `f2_valid`, `f2_va`, fetch 返回的 `fetch_resp_inst`
+| 级 | 寄存器 | 本拍动作 |
+|----|--------|----------|
+| **`f2`** | `f2_va`, `f2_pa`, `f2_valid`, `f2_*` fault | `f2 ← f1`；持 VA/PA 等 ICU/ILM 返回；`f2_itlb_miss` / `f2_cache_miss` 进 FSM（`ST_FILL_TLB` / `ST_MH`） |
+| **I$ 组织** | — | **VIPT 类**：index 用 `[10:6]`（4KiB 页内 VA=PA）；tag 比较用 ITLB 后的 `ifu_icu_f1_pa` 高位；miss 分配 index 记 `f2_va[10:6]` |
+| **返回** | — | `fetch_resp` → `kv_pq` 做 RVC/双发对齐 → `ifu_i0/i1_pc`、`pred_*` → **`fq_wr`** 入 FQ(4) |
 
-| 动作 | 实现 |
-|------|------|
-| 等 I$/ILM | `f2_cache_miss` → `ST_MH`；`f2_itlb_miss` → TLB fill |
-| 对齐/拆包 | RVC：`ifu_i0_instr_16b`；双发时 `inst0_issue`/`inst1_issue` |
-| 异常/Ecc | `f2_xcpt`, `fq_wr_xcpt` 打入 FQ |
-| 入队 | `fetch_valid` → `kv_fq`（`FQ_DEPTH=4`） |
-
-### FQ — Fetch Queue（IC↔ID，`kv_fq.v`）
+### FQ — Fetch Queue
 
 夹在 **S2 与 S3** 之间，深度 4、双宽（每拍最多出 `fq_i0`/`fq_i1` 两条）。
 
-```
-  IC (f2 fetch_resp)                    ID (kv_dec)
-       │  fq_wr                           │ fq_i0/i1_ready = id_ready[*]
-       ▼                                  ▼
-  ┌─────────────────────────────────────────────┐
-  │  s0[0..3]  环形 RAM，每项 75b                │
-  │  wptr=s8   rptr=s3                          │
-  │  每拍 fq_wr 入队 1 bundle（最多 4×16b 指令）   │
-  │  每拍 fq_rd  出队 0~2 条 → fq_i0 / fq_i1     │
-  └─────────────────────────────────────────────┘
-```
+![FQ 结构](ax46mpv/fq.svg)
 
 | 信号 | 方向 | 含义 |
 |------|------|------|
@@ -197,18 +123,7 @@
 
 夹在 **S3 与 S4** 之间，深度 4、双宽（每拍最多 push/pop 各 2 项）。
 
-```
-  ID                                     IS (kv_iiu)
-   │  iiq_w_valid = {id_i1_alive,id_i0_alive}     │ iiq_r_ready = ii_ready
-   │  iiq_w_ready = id_ready                      │ iiq_r_valid = ii_valid
-   ▼                                              ▼
-┌──────────────────────────────────────────────────────┐
-│  s0[3:0]  valid-bit 占用掩码                          │
-│  4×IIQ_WIDTH 数据 RAM（PC/NPC/ctrl/imm/pred/…）       │
-└──────────────────────────────────────────────────────┘
-       │ pop 后 kv_iiq_wrap 再跑 kv_dec → ii_i0/i1_ctrl
-       ▼
-```
+![IIQ 结构](ax46mpv/iiq.svg)
 
 | 信号 | 连接 |
 |------|------|
@@ -488,17 +403,7 @@ ii_i1_stall = ii_i0_stall | ii_i1_raw_hazard | ii_i1_struct_hazard | ii_i1_waw_h
 
 ### T0 — 单条指令填满 8 级（理想 I$ hit）
 
-```
-        C0   C1   C2   C3   C4   C5   C6   C7   C8
-IF       A
-IC            A
-ID                 A
-IS                      A
-EX                           A    alu0/bru0 组合
-MM                                A    分支判定向量
-LX                                     A    结果/LS 合入
-WB                                          A    rf_we, retire
-```
+![T0](ax46mpv/t00.svg)
 
 - `C3` IS：读 XRF，`ii_src*` 锁入 `ex_src*_reg`（下一拍 EX）。
 - `C4` EX：`ex_rd1_wdata` 组合有效，同拍可供 younger IS bypass（`bypass[1]`）。
@@ -508,17 +413,7 @@ WB                                          A    rf_we, retire
 
 ### T1 — 双发稳态（每周期 IS 发射 A=i0, B=i1）
 
-```
-        C0   C1   C2   C3   C4   C5   C6   C7   C8   C9
-IF       A    B    C    D
-IC            A    B    C    D
-ID                 A,B  C,D
-IS                      A,B  C,D  (ii_valid[1:0]=2'b11)
-EX                           A,B  C,D
-MM                                A,B  C,D
-LX                                     A,B  C,D
-WB                                          A,B  C,D
-```
+![T1](ax46mpv/t01.svg)
 
 - `A` 占 i0 槽（`alu0`/`bru0`/`ls_req`）；`B` 占 i1 槽（`alu1`/`bru1`）。
 - `ii_i1_stall=0` 时 `ii_ready[1]=1`；i0 stall 会级联停 i1。
@@ -527,16 +422,7 @@ WB                                          A,B  C,D
 
 ### T2 — EX 旁路（early ALU → 下一条 IS 读同一 rd）
 
-```
-指令:  A  add x1, x2, x3     (early, rd=x1)
-       B  add x4, x1, x5     (rs1=x1, 依赖 A)
-
-        C3   C4   C5   C6
-IS       A
-EX            A → ex_rd1
-IS                 B  rs1 ← bypass[1]=ex_rd1_wdata  (同拍组合)
-EX                      B → ex_rd1
-```
+![T2](ax46mpv/t02.svg)
 
 - scb：`rs1_match_ex_rd1`，`s188[0]=1` → **非 late**，`ii_i0_raw_hazard=0`。
 - 若 A 在 MM 而 B 在 IS：`bypass[3]=mm_rd1_wdata`。
@@ -555,22 +441,7 @@ EX                      B → ex_rd1
 
 ### T3 — Late ALU 路径（load 生产 → late ALU 消费）
 
-```
-指令:  A  lw   x1, 0(x2)      (load, rd=x1, 结果 @ LX)
-       B  add  x3, x1, x4     (rs1=x1 → ii_i0_late=1)
-
-        C3   C4   C5   C6   C7   C8   C9
-IS       A
-EX            A  ls_req_valid ──────────────┐
-MM                 A                       │ kv_lsu
-LX                      A  ls_resp ────────┘ lx_rd1 ← load data
-IS                           B  late=1, stall? (若不能 s251 放宽)
-IS                                B  (RAW 解除后发射)
-EX                                     B  ctrl[149]=1, EX 不算 ALU
-MM                                          B
-LX                                               B  alu2 → lx_rd1
-WB                                                    B  rf_we
-```
+![T3](ax46mpv/t03.svg)
 
 - 生产者 load：`ii_ex_rd1_fu[1]=1`，`s188[0]=0` → 消费 `add` 的 `ii_i0_late=1`。
 - `ii_ex_i0_ctrl[134]=0`，`[149]=1`：操作数过 `EX→MM→LX` 三级寄存器后在 **LX** 用 `alu2` 算。
@@ -580,18 +451,7 @@ WB                                                    B  rf_we
 
 ### T4 — Load-use RAW stall（classic，不能 bypass）
 
-```
-指令:  A  lw   x1, 0(x2)
-       B  add  x3, x1, x4     (必须等 A 的 load 数据)
-
-        C3   C4   C5   C6   C7   C8
-IS       A
-EX            A  ls_req
-IS                 B  ii_i0_raw_hazard=1  ii_i0_stall=1  (bubble)
-IS                      B  (A@LX 有数据 / bypass[5]) 发射
-EX                           B
-...
-```
+![T4](ax46mpv/t04.svg)
 
 - `rs1` 命中 EX/MM 的 load dest，且 scb 判定本拍不能 forward → **IS 插泡**。
 - 解除条件：A 到 LX 且 `lx_rd1_wdata` 有效，或 MM load 快路径 `fpu_fmis` 提前。
@@ -600,17 +460,7 @@ EX                           B
 
 ### T5 — 同拍 i0 load → i1 early ALU（`s251` 放宽，不 stall）
 
-```
-指令:  A  lw   x1, 0(x2)     (i0)
-       B  add  x3, x1, x5     (i1, 同拍 IS 双发)
-
-        C3   C4   C5   C6   C7
-IS       A,B  双发 (s251: fu[3]&i1 ALU 例外)
-EX            A,B
-MM                 A  (load 进行中)
-LX                      A  ls_resp → lx_rd1
-                         B  已发射；若 rs1=x1 仍可能 late 或在 LX 用 alu3+ls_resp
-```
+![T5](ax46mpv/t05.svg)
 
 - RTL：`~(ii_i0_fu[3] & ii_i1_fu[0] & ~ii_i1_late)` 等项使 **i1 不因 i0 load RAW 停发**。
 - i1 操作数可能在 LX 通过 `alu3` mux `ls_resp_bresult`（`ii_i1_lx_bypass`）。
@@ -619,19 +469,7 @@ LX                      A  ls_resp → lx_rd1
 
 ### T6 — Early 分支误判（`bru0` @ EX，MM 解析）
 
-```
-指令:  A  beq  x1, x2, target   (预测 taken，实际 not taken)
-       B  ...                   (错误路径)
-       C  ...                   (错误路径)
-
-        C4   C5   C6   C7   C8   C9
-EX       A    bru0_target vs pred
-MM            A    mm_i0_mispred=1
-                  mm_i0_kill, mm_redirect
-IF                      redirect_pc (顺序 NPC)
-                  iiq_flush, kill B,C @ MM/LX/WB
-IS                           A' 正确路径重取
-```
+![T6](ax46mpv/t06.svg)
 
 - `mm_redirect_final` → IFU `redirect_pc`；`iiq_flush` 清 IIQ。
 - 若在 `C6` 同时 `lx_stall=1`：`mm_redirect_issued` 推迟到 stall 结束（`mm_redirect & ~mm_redirect_issued`）。
@@ -640,16 +478,7 @@ IS                           A' 正确路径重取
 
 ### T7 — Late 分支误判（`bru2` @ LX）
 
-```
-指令:  A  依赖 load 的 branch/JALR  (ii_i1_late on BR, ctrl[147]@LX)
-
-        C5   C6   C7   C8   C9
-EX       A
-MM            A
-LX                 A  bru2_target, 判 mispred
-WB                      A  lx_wb val / redirect 信息
-IF                           redirect (比 early 分支晚 2 级)
-```
+![T7](ax46mpv/t07.svg)
 
 - late BR：`bru2/3` 在 LX；误判反馈到 fetch 的路径比 early（MM）**更晚**。
 - struct：`ii_i1_fu[2/4] & (ii_i0_fu[8]&ii_i0_late)` → late BR 不能与 i1 LS 双发。
@@ -658,18 +487,7 @@ IF                           redirect (比 early 分支晚 2 级)
 
 ### T8 — `lx_stall` 冻结后端（LSU 等响应）
 
-```
-        C4   C5   C6   C7   C8   C9
-IS       A    B
-EX            A    B
-MM                 A    B
-LX                      A══ 等 ls_resp, lx_stall=1
-IS                           B  (停)   ii_ready=0
-EX                                A,B  (hold)
-MM                                     A,B  (hold)
-LX                      A    ls_resp → lx_stall=0
-IS                           B    恢复推进
-```
+![T8](ax46mpv/t08.svg)
 
 - `ii_ready = ~(lx_stall | ii_i0_stall)`；`mm_valid_en = ~lx_stall`；`lx_valid` 仅在 `~lx_stall` 时更新。
 - WB：`wb_valid` 在 stall 期间保持（`lx_wb_async_stall`）。
@@ -678,15 +496,7 @@ IS                           B    恢复推进
 
 ### T9 — Load 全路径（EX 发请求 → LX 写回）
 
-```
-        C4   C5   C6   C7   C8   C9   C10
-EX       LD   ls_req_valid, base=ex_src1_reg
-         │    ls_req_stall[0/1] 可能拉高
-MM            LD   ls 管线排队 (kv_lsuop)
-LX                 LD══ D$ access / MSHR
-LX                      LD   ls_resp_valid, lx_rd1←ls_resp
-WB                           LD   rf_we (ctrl[185] 路径)
-```
+![T9](ax46mpv/t09.svg)
 
 - **EX：** `ls_req_func`, `ls_req_offset`, `ls_req_asid` 同拍送出。
 - **LX：** `lx_i0_ctrl[185]` 选 `ls_resp_result_with_nan_boxing` 进 `lx_rd1_wdata`。
@@ -696,15 +506,7 @@ WB                           LD   rf_we (ctrl[185] 路径)
 
 ### T10 — MDU（EX `mdu_req` → LX `mdu_resp`）
 
-```
-        C4   C5   C6   C7   C8   C9   C10  C11
-EX       DIV  mdu_req_valid, op from ex_src* + ii_mdu_bypass
-         │    ~mdu_req_ready → ii_struct_hazard (后续 DIV 停发)
-MM            DIV
-LX                 DIV══ kv_mdu 多拍
-LX                      DIV  mdu_resp_valid → lx_rd1 (ctrl[186])
-WB                           DIV  rf_we
-```
+![T10](ax46mpv/t10.svg)
 
 - 第二个 MDU 在 IS：`ii_i1_fu[6] & ii_i0_fu[6]` → `ii_i1_struct_hazard`。
 
@@ -712,16 +514,7 @@ WB                           DIV  rf_we
 
 ### T11 — WAW 同拍冲突（i0/i1 写同一 rd）
 
-```
-指令:  A  add x1, ...   (i0, rd=x1)
-       B  add x1, ...   (i1, rd=x1)
-
-        C3
-IS       A,B  ii_i1_waw_hazard=1 (ii_i0_rd1==ii_i1_rd1)
-              ii_i1_stall=1 → 仅发 A
-        C4
-IS            B  (A 进入 EX 后下一拍可发 B，若 WAW 表允许)
-```
+![T11](ax46mpv/t11.svg)
 
 - i0 WAW：与 EX/MM/LX/WB 在途 dest 冲突 → `ii_i0_waw_hazard`。
 
@@ -729,15 +522,7 @@ IS            B  (A 进入 EX 后下一拍可发 B，若 WAW 表允许)
 
 ### T12 — NBLOAD（`ii_*_ex/mm_nbload_hazard`）
 
-```
-指令:  A  lw   x1, ...  (non-blocking load)
-       B  add  x2, x1,... 
-
-EX/MM:  A 在 EX/MM 时 ls_resp_nbload 有效
-IS:     B  ii_i0_ex_nbload_hazard 或 ii_i0_mm_nbload_hazard
-        → 打入 ii_ex_ctrl[191]/[189]
-MM:     可能 mm_i0_nbload_hazard → replay
-```
+![T12](ax46mpv/t12.svg)
 
 - 与普适 RAW 分开编码；load 数据提前部分可见但需遵守 nbload 规则。
 
@@ -745,13 +530,7 @@ MM:     可能 mm_i0_nbload_hazard → replay
 
 ### T13 — 同周期 EX ∥ LX（4 ALU 忙，issue 仍 ≤2）
 
-```
-        C6
-EX       D(early)   alu0/1  ← 本拍 IS 刚发射的年轻指令
-MM       C
-LX       B(late)    alu2/3  ← 年老 late 指令
-WB       A
-```
+![T13](ax46mpv/t13.svg)
 
 - 物理资源：`u_alu0/1` @ EX，`u_alu2/3` @ LX；**发射宽度仍为 2**。
 
@@ -759,26 +538,13 @@ WB       A
 
 ### T14 — LS 基址旁路限制（禁 EX forward）
 
-```
-指令:  A  add x1, x2, x3   (early, @ EX)
-       B  sw  x4, 0(x1)    (rs1=x1 作 base)
-
-IS(B):  rs1 命中 A@EX → ii_i0_ls_base_bypass=0
-        不能用 bypass[1]；必须等 A@MM+ 或 stall
-EX(A):  ls_req_base0 不用 EX 级 forward 的 x1
-```
+![T14](ax46mpv/t14.svg)
 
 ---
 
 ### T15 — 前端背压（FQ full / ID stall）
 
-```
-        C0   C1   C2   C3   C4
-IF       *    *    stall  (fq_full_stall | ipipe_ifu_stall)
-IC            *    *
-FQ       [..] [满] 不 pop
-ID                 stall  (id_ex9_wait_resp / ifd_stall)
-```
+![T15](ax46mpv/t15.svg)
 
 - `ifu_i0_ready = id_ready[0] & ~id_ex9_wait_resp & …`：ID 不收则 FQ 不空。
 
@@ -786,13 +552,7 @@ ID                 stall  (id_ex9_wait_resp / ifd_stall)
 
 ### T16 — IIQ 背压（ID 继续 push、IS stall）
 
-```
-        C3   C4   C5   C6
-ID       push A,B  push C,D   (iiq_w_ready=1)
-IS            A,B  stall      ii_ready=0, 不 pop
-IIQ      [A,B] [A,B,C,D]     深度≤4
-IS                      A,B  stall 解除后 pop
-```
+![T16](ax46mpv/t16.svg)
 
 （FQ 在 `id_ready=0` 时行为对称：`ifu_i0_ready=0` → FQ 不 pop → 可 `fq_full_stall` 停取指。）
 
@@ -800,14 +560,7 @@ IS                      A,B  stall 解除后 pop
 
 ### T17 — `wb_kill` 陷阱（冲刷在途）
 
-```
-        C7   C8   C9
-LX       A    B
-WB            A    trap → wb_kill=1
-MM                 B    killed (不 retire)
-EX                      C    killed
-IS                           flush younger
-```
+![T17](ax46mpv/t17.svg)
 
 - `ii_alive` 含 `~wb_kill`；`mdu_kill` 等同理清 MDU 状态。
 
