@@ -2,120 +2,118 @@
 
 RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/`（按 46 `cfg.txt` 实例化）。
 
----
+8 级顺序双发流水线。FQ(4)、IIQ(4) 是级间双宽 FIFO，不算流水级。
 
-## 流水级与寄存器
-
-| 级 | 寄存器组 | 本拍动作 |
-|----|----------|----------|
-| **f0** | `f0_pc`, `f0_valid`, `f0_bblk_start` | 锁 PC：redirect/resume/retry/prefetch/recover 时置 `f0_valid`；`req_addr = redirect ? redirect_pc : f0_valid ? f0_pc : target_pc` |
-| **f1** | `f1_va`, `f1_valid`, `f1_req_type` | `fetch_issue = req_valid & req_ready` 时 `f1_va <= req_addr`；ITLB 查 `f1_va` → `f1_pa`；发 ICU/ILM 请求 |
-| **f2** | `f2_va`, `f2_pa`, `f2_valid` | `f2 <= f1`；等 I$/ILM 返回 `fetch_resp_inst`；`f2_cache_miss` → `ST_MH`，`f2_itlb_miss` → `ST_FILL_TLB` |
-| **FQ** | `s0[0..3]`（`kv_fq`） | `fq_wr = \|fetch_resp_valid`；环形 FIFO，每项 75b（inst + valid + xcpt + bblk） |
-| **ID** | `id_i0_alive`（`kv_uins_ctl`） | FQ 出队 `ifu_i0_pc` 组合给 `id_i0_pc`；`kv_dec` 译码；`iiq_w_valid = {id_i1_alive, id_i0_alive}` |
-| **IS** | IIQ 项 → `ii_*` | IIQ pop：`ii_i0_pc` 从队列出；`kv_iiu_scb` 算 hazard/bypass/late；`ii_ready = ~(lx_stall \| ii_*_stall)` |
-| **EX** | `ex_valid`, `ex_src*_reg`, `ex_i0_pc` | `ex_i0_pc <= ii_i0_pc`；early ALU/BRU；`ls_req`/`mdu_req` 发起 |
-| **MM** | `mm_valid`, `mm_src*_reg`, `mm_i0_pc` | `mm_i0_pc <= ex_i0_pc`；分支判定向量；`mm_redirect`；BTB 更新 |
-| **LX** | `lx_valid`, `lx_src*_reg`, `lx_i0_pc` | `lx_i0_pc <= mm_i0_pc`；late ALU/BRU；`ls_resp`/`mdu_resp` 合入 |
-| **WB** | `wb_valid`, `wb_i0_pc` | `wb_i0_pc <= wb_i0_pc_nx`；`rf_we` 写 XRF/FRF；`kv_cmt` 退休 |
+| 级 | 名称 | 本拍干什么 |
+|----|------|-----------|
+| 1 | IF | 算 next PC，发取指请求 |
+| 2 | IC | 等 I$/ILM 返回，入 FQ |
+| 3 | ID | 译码，入 IIQ |
+| 4 | IS | IIQ 出队，查 hazard，发射 |
+| 5 | EX | early ALU/BRU，发 LSU/MDU 请求 |
+| 6 | MM | 分支误判判定，BTB 更新 |
+| 7 | LX | late ALU/BRU，LSU/MDU 响应合入 |
+| 8 | WB | 写回，退休 |
 
 ---
 
-## IF 级详细（`kv_ifu`）
+## IF — 取指地址
 
-### next PC 生成
+**PC 怎么来：**
 
-| 信号 | 来源 | 选择逻辑 |
-|------|------|----------|
-| `target_pc` | `kv_pq` | BTB 命中 → `bpu_info_target`；基本块内 → latched target；否则 → `seq_pc` |
-| `seq_pc` | `kv_ifu` | `req_addr[MSB:3] + 8`（bundle 8B 前进） |
-| `redirect_pc` | `kv_ipipe` | `redirect` 时强制 |
-| `f0_pc` | `f0` 寄存器 | `f0_valid=1` 时保持 |
+- 正常顺序：BTB 命中走预测目标；否则 `seq_pc` = 当前 8B 块 +8。
+- 改向：`redirect_pc` 优先级最高。
+- 多拍路径：redirect 等 BPU 不 ready 时，PC 锁在 `f0_pc`，下拍继续发。
 
-`req_addr = redirect ? redirect_pc : f0_valid ? f0_pc : target_pc`
+**两拍寄存器：**
 
-### f0 寄存器
+- `f0` 拍：锁 `f0_pc`；组合选出 `req_addr` 发请求。
+- `f1` 拍：`f1_va` 打进来；ITLB 查 `f1_va` 得 `f1_pa`；发 I$/ILM 请求。
 
-- `f0_valid_set`：redirect 且 stall/`~req_ready`/`~bpu_rd_ready`、resume、retry、prefetch、recover、EX9、ECC revise、cctl。
-- `f0_valid_clr`：`fetch_issue` 或 `ic_op_req_pulse`。
-- `f0_pc_update` 同 `f0_valid_set` 条件；`f0_pc <= f0_pc_nx`。
-
-### f1 寄存器
-
-- `f1_valid_nx = fetch_issue & ~f1_kill & ~ex9_lookup_valid \| (redirect & ...)`。
-- `f1_va <= req_addr` when `fetch_issue`。
-- `f1_req_type <= pf_req_type`；`f1_req_start <= req_bblk_start`。
-- ITLB：`f1_translate_en = MMU使能 & ~resp_sel_ilm`；`ifu_itlb_req_valid = f1_valid & ~f2_stall & f1_translate_en`；`f1_pa = f1_translate_en ? itlb_ifu_pa : f1_va`。
-
-### f2 寄存器
-
-- `f2_valid_nx = f1_valid & ~f2_kill`。
-- `f2_va <= f1_va`；`f2_pa <= f1_pa`；`f2_itlb_miss <= f1_itlb_miss` 等 fault 位。
-- `f2_cache_miss = f2_alive & fetch_icu_valid & icu_ifu_resp_status[22] & ...`。
-- `fq_wr = |fetch_resp_valid`；`fetch_resp_inst` 来自 ILM 或 ICU。
+I$ 是 VIPT：index 用地址 `[10:6]`（4KiB 页内 VA=PA），tag 用 `f1_pa` 高位。
 
 ---
 
-## ID 级（`kv_ipipe` 内 `kv_uins_ctl` + `kv_dec`）
+## IC — 取指数据
 
-- `id_i0_pc = ifu_i0_pc`（组合直通，正常路径无寄存器）。
-- `id_i0_alive = ifu_valid[0] & ~ifd_stall[0]`（`kv_uins_ctl` 状态机 `IDLE` 时）。
-- `kv_dec` 组合：`ifd_i0_instr` → `id_i0_ctrl[374:0]`、imm、FU 位。
-- `iiq_w_valid = {id_i1_alive, id_i0_alive}`；`id_ready` 满时 FQ 停 pop。
-
----
-
-## IS 级（`kv_iiq_wrap` + `kv_iiu` + `kv_iiu_scb`）
-
-- IIQ 4 项 FIFO（`kv_iiq.v`），项内容 `{pc, npc, ctrl, imm, pred_info, ecc}`。
-- `ii_i0_pc` 从 IIQ 队头出；`ii_ready = ~(lx_stall | ii_i0_stall)` 控制 pop。
-- `kv_iiu_scb` 组合：RAW/WAW/struct hazard、bypass 向量、late 判定。
-- 发射后 `ex_i0_pc <= ii_i0_pc`。
+- `f2` 拍：`f2` 锁 `f1` 的 VA/PA；等 I$/ILM 返回指令。
+- miss 处理：I$ miss 进 `ST_MH` 等总线回填；ITLB miss 进 `ST_FILL_TLB`。
+- 返回后：RVC 拆包、双发对齐，生成 `ifu_i0/i1_pc` 和预测信息，写入 **FQ(4)**。
 
 ---
 
-## EX 级（`kv_ipipe`）
+## ID — 译码
 
-- `ex_ctrl_en = ii_valid[0] & ~lx_stall`；`ex_i0_pc <= ii_i0_pc`。
-- `bru0_pc = ex_i0_pc`；`ls_req_pc = ex_i0_pc[11:0]`。
-- early ALU `alu0/1` 组合计算；`ls_req_valid`、`mdu_req_valid` 发起。
-
----
-
-## MM 级（`kv_ipipe`）
-
-- `mm_ctrl_en = ex_i0_valid & ~lx_stall`；`mm_i0_pc <= ex_i0_pc`。
-- `mm_i0_mispred` 分支判定；`mm_redirect` → IFU `redirect_pc`。
-- `mm_btb_update_p0_start_pc = mm_i0_bblk_start_pc`；`mm_btb_update_p0_target_pc = mm_i0_npc`。
+- FQ 出队，PC 直接给到译码器（`id_i0_pc` 是组合直通，无寄存器）。
+- `kv_dec` 组合译码出 375b 控制字、立即数、功能单元标记。
+- 微码指令由 `kv_uins_ctl` 替换控制字。
+- 译码结果和 PC 写入 **IIQ(4)**；IIQ 满时 FQ 停 pop。
 
 ---
 
-## LX 级（`kv_ipipe`）
+## IS — 发射
 
-- `lx_ctrl_en = mm_alive[0] & ~lx_stall`；`lx_i0_pc <= mm_i0_pc`。
-- `bru2_pc = lx_i0_pc`（late 分支）。
-- `lx_rd1_wdata` 合入 `ls_resp_result`、`mdu_resp_result`、`alu2_result`。
-
----
-
-## WB 级（`kv_ipipe`）
-
-- `wb_ctrl_en = lx_i0_valid & ~lx_stall`；`wb_i0_pc <= wb_i0_pc_nx`。
-- `rf_we1 = wb_i0_doable & wb_i0_ctrl[135]`；`kv_cmt` 退休。
-- `wb_i0_redirect` 时 `redirect_pc = wb_i0_npc`。
+- **IIQ** 出队：`ii_i0_pc`、`ii_i0_ctrl` 等进入发射逻辑。
+- **hazard 检查**（`kv_iiu_scb`）：
+  - RAW：源寄存器与 EX/MM 在途目的寄存器比较。
+  - WAW：目的寄存器与 EX/MM/LX/WB 在途写冲突。
+  - 结构：LSU/MDU 忙、双 FPU 等。
+- **bypass 选择**：`ii_src*` 从 XRF、EX、MM、LX、WB 前递选数据。
+- **late 判定**：load 生产 → 消费指令标记 late，操作数到 LX 才算。
+- `ii_ready = ~(lx_stall | ii_stall)`；i0 stall 会级联停 i1。
 
 ---
 
-## 时序总表
+## EX — early 执行
+
+- `ex_i0_pc` 锁 PC；`ex_src*_reg` 锁操作数。
+- **early ALU**（`alu0/1`）、**early BRU**（`bru0/1`）组合计算，结果 `ex_rd1_wdata` 同拍可前递给 IS。
+- **LSU**：`ls_req_valid` 发起，基址 `ex_src*_reg`。
+- **MDU**：`mdu_req_valid` 发起，操作数来自 `ex_src*`。
+- `lx_stall=1` 时本拍冻结。
+
+---
+
+## MM — 访存解析 / 分支误判
+
+- `mm_i0_pc` 锁 PC；`mm_src*_reg` 锁操作数。
+- **分支误判**：`mm_i0_mispred` 比较 `bru0` 预测与实际；误判时 `mm_redirect` 改向，清 IIQ。
+- **BTB 更新**：`mm_btb_update` 送 `kv_bpu`（若 WB 没更老指令抢）。
+- **load 快路径**：`mm_i0_ctrl[161]` 时 FPU FMIS 结果提前合入。
+- `lx_stall=1` 时冻结。
+
+---
+
+## LX — late 执行 / 访存返回
+
+- `lx_i0_pc` 锁 PC；`lx_src*_reg` 锁操作数。
+- **late ALU**（`alu2/3`）、**late BRU**（`bru2/3`）组合计算。
+- **LSU 响应**：`ls_resp_result` 合入 `lx_rd1_wdata`。
+- **MDU 响应**：`mdu_resp_result` 合入。
+- **CSR**：`csr_ipipe_resp_rdata` 合入。
+- `lx_stall` 由 LSU 等未就绪拉高，冻结 II/EX/MM/LX。
+
+---
+
+## WB — 写回 / 退休
+
+- `wb_i0_pc` 锁 PC；`wb_rd*_wdata` 定稿。
+- **写寄存器**：`rf_we` 写 XRF；`frf_we` 写 FRF。
+- **退休**：`wb_i0_retire` → `kv_cmt`，处理异常、中断、性能计数。
+- **redirect**：`wb_i0_redirect` 时 `redirect_pc = wb_i0_npc`，清后端。
+
+---
+
+## 时序（单条指令，无 stall）
 
 | 拍 | 动作 |
 |----|------|
-| C0 | `f0_pc`/`target_pc` → `req_addr` |
-| C1 | `f1_va <= req_addr`；ITLB 查 `f1_va` |
-| C2 | `f2_va <= f1_va`；I$/ILM 返回 → FQ |
-| C3 | FQ 出队 → `id_i0_pc`（组合）；译码 |
-| C4 | IIQ pop → `ii_i0_pc`；hazard/发射 |
-| C5 | `ex_i0_pc <= ii_i0_pc`；EX 执行 |
-| C6 | `mm_i0_pc <= ex_i0_pc`；分支判定 |
-| C7 | `lx_i0_pc <= mm_i0_pc`；late 执行 |
-| C8 | `wb_i0_pc <= lx_i0_pc`；写回/退休 |
+| C0 | `f0` 锁 PC；`req_addr` 发出 |
+| C1 | `f1_va` 打进；ITLB 查；I$/ILM 请求 |
+| C2 | `f2` 等返回；写入 FQ |
+| C3 | FQ 出队；译码；写入 IIQ |
+| C4 | IIQ 出队；hazard 检查；发射 |
+| C5 | EX 执行；early 结果可前递 |
+| C6 | MM 判定分支；BTB 更新 |
+| C7 | LX late 执行；LSU/MDU 响应 |
+| C8 | WB 写回；退休 |
