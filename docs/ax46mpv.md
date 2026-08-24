@@ -68,3 +68,44 @@ F0 选出 `req_addr`：
 ---
 
 优先级：`redirect_pc` > `f0_pc` > `target_pc`。
+
+---
+
+## F1
+
+F1 锁存 F0 发出的 `req_addr` → `f1_va`，干三件事：
+
+- ITLB 翻译：`f1_va` → `f1_pa`（物理地址）
+- 发 `f1_pa` 给 I$ → tag 比较（VIPT：F0 用 VA index，F1 用 PA tag）
+- BTB 响应到 → `kv_pq.v` 算 `target_pc`（next_pc）
+
+```1041:1042:docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v
+    else if (fetch_issue) begin
+        f1_va <= req_addr;
+```
+
+```995:996:docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v
+assign ifu_itlb_req_valid = ~f1_req_type[2] & f1_valid & ~f2_stall & f1_translate_en;
+assign ifu_itlb_va = f1_va;
+```
+
+```1007:1007:docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v
+assign f1_pa = f1_translate_en ? itlb_ifu_pa : f1_va_sext;
+```
+
+```1019:1019:docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v
+assign ifu_icu_f1_pa = f1_pa;
+```
+
+### ITLB 异常
+
+| 信号 | 场景 |
+|------|------|
+| `f1_itlb_miss` | ITLB miss，需 retry |
+| `f1_itlb_page_fault` | 页错误 |
+| `f1_itlb_pmp_fault` | PMP 违规 |
+| `f1_itlb_pma_fault` | PMA 违规 |
+| `f1_itlb_bus_error` | 总线错误 |
+| `f1_itlb_ecc_xcpt` | ECC 错误 |
+
+`f1_pa_invalid` = 上述任一，F1 作废，不送 F2。
