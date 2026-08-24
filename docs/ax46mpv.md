@@ -6,15 +6,16 @@ RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v`。
 
 ## f0 — PC 锁存与选择
 
-f0 是取指第一拍寄存器级，管两件事：
+f0 是取指第一拍寄存器级，干一件事：**选出本拍发给 I$/ILM 的地址 `req_addr`**。
 
-1. **锁 PC**：redirect 等后端 stall、resume、retry、prefetch、recover 时，把地址锁在 `f0_pc`，`f0_valid=1`。
-2. **选地址**：组合逻辑选出本拍发给 I$/ILM 的 `req_addr`。
+`req_addr` 三个候选：
 
-`req_addr` 优先级：`redirect_pc` > `f0_pc` > `target_pc`。
+| 候选 | 什么时候用 |
+|------|-----------|
+| `redirect_pc` | 分支误判、异常、resume 改向 |
+| `f0_pc` | 上拍没发出去（BPU 不 ready、recover、prefetch…），锁住的地址 |
+| `target_pc` | 正常顺序/预测前进（BTB 或 `seq_pc`） |
 
-`target_pc` 来自 `kv_pq`（BTB/BHT/RAS 预测或 `seq_pc` 顺序 +8）。
+优先级：`redirect_pc` > `f0_pc` > `target_pc`。
 
-`f0_pc` 的源：redirect、resume、retry、prefetch、recover、EX9、cache flush、ECC 修正。
-
-`fetch_issue = req_valid & req_ready` 时 `f0_valid` 清，地址进 f1。
+`f0_pc` 在 `f0_valid=1` 时锁存上拍地址；`fetch_issue` 后 `f0_valid` 清。
