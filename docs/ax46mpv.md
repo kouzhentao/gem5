@@ -8,8 +8,6 @@ RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v`。
 
 选出发给 I$/ILM 的地址 `req_addr`。
 
-`req_addr` 是**取指请求地址**：
-
 - `ifu_icu_req_addr` → I$（`kv_icu`）
 - `ifu_ilm_req_addr` → ILM
 
