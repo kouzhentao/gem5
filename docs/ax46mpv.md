@@ -4,9 +4,9 @@ RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v`。
 
 ---
 
-## f0 — PC 锁存与选择
+## f0
 
-f0 是取指第一拍寄存器级，干一件事：**选出本拍发给 I$/ILM 的地址 `req_addr`**。
+选出本拍发给 I$/ILM 的地址 `req_addr`。
 
 `req_addr` 是**取指请求地址**，同拍送到：
 
