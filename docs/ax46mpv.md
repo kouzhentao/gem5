@@ -2,7 +2,20 @@
 
 RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/`（按 46 `cfg.txt` 实例化）。
 
-**寄存器链（posedge）：** `f0/f1/f2`（`kv_ifu`）→ `fq_*`（`kv_fq`）→ `id_*`（`kv_ipipe` 内）→ `ii_*`（`kv_iiq_wrap`）→ `ex_*` → `mm_*` → `lx_*` → `wb_*`（`kv_ipipe`）。相邻带 `_` 前缀的寄存器组就是一级流水；FQ/IIQ 是带 wptr/rptr 的 FIFO，不是单寄存器级。
+**8 级（按 PC 寄存器划分）：**
+
+| 级 | 名称 | PC 寄存器 | 主模块 |
+|----|------|-----------|--------|
+| 1 | IF | `f0_pc`, `f1_va` | `kv_ifu` |
+| 2 | IC | `f2_va`, `f2_pa` | `kv_ifu`, `kv_icu` |
+| 3 | ID | `id_i0_pc`, `id_i1_pc` | `kv_ipipe` |
+| 4 | IS | `ii_i0_pc`, `ii_i1_pc` | `kv_iiq_wrap`, `kv_iiu` |
+| 5 | EX | `ex_i0_pc`, `ex_i1_pc` | `kv_ipipe` |
+| 6 | MM | `mm_i0_pc`, `mm_i1_pc` | `kv_ipipe` |
+| 7 | LX | `lx_i0_pc`, `lx_i1_pc` | `kv_ipipe` |
+| 8 | WB | `wb_i0_pc`, `wb_i1_pc` | `kv_ipipe` |
+
+FQ(4)（IC↔ID）和 IIQ(4)（ID↔IS）是双宽 FIFO，不算流水级。
 
 ---
 
