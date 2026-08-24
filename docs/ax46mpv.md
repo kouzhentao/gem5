@@ -8,6 +8,11 @@ RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v`。
 
 f0 是取指第一拍寄存器级，干一件事：**选出本拍发给 I$/ILM 的地址 `req_addr`**。
 
+`req_addr` 是**取指请求地址**，同拍送到：
+
+- `ifu_icu_req_addr` → I$（`kv_icu`）
+- `ifu_ilm_req_addr` → ILM
+
 `req_addr` 三个候选：
 
 | 候选 | 什么时候用 |
