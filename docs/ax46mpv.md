@@ -21,26 +21,16 @@
 
 ---
 
-## 硬件框图
-
-![流水线硬件框图](ax46mpv/block.svg)
-
----
-
 ## 数据通路 vs 控制通路
-
-![数据通路 vs 控制通路](ax46mpv/data-ctrl.svg)
 
 - **数据：** `instr` → `id_ctrl` → `ii_ctrl` → `ex/mm/lx/wb_ctrl` 随指令走；操作数 `ii_src*` → `ex_src*_reg` → `mm_src*_reg` → `lx_src*_reg`。
 - **控制：** `kv_iiu_scb` 在 IS 级产生 `stall`/`bypass`/`late`；`mm_redirect`/`wb_kill` 在 MM/WB 级 flush；`lx_stall` 冻结 II→LX 全部流水寄存器。
 
 ---
 
-## S1 — IF（取指地址：`f0` → `f1`）
+## IF（取指：`f0` → `f1`）
 
-取指在 `kv_ifu` 内有 **两个 posedge 寄存器级**（`f0_*`、`f1_*`），外加组合级的 PC 选择；不是「`f0`/`f1` 之间无寄存器」。
-
-![取指通路](ax46mpv/fetch.svg)
+取指在 `kv_ifu` 内有 **两个 posedge 寄存器级**（`f0_*`、`f1_*`），外加组合级的 PC 选择；`f0` 与 `f1` 之间就是一级寄存器。
 
 ### next PC 怎么来
 
@@ -66,11 +56,11 @@
 | **`f1`** | `f1_va`, `f1_valid`, `f1_req_*` | `fetch_issue`（=`req_valid & req_ready`）时 `f1_va ← req_addr`；非 ILM 且 MMU 开 → ITLB 查 `f1_va` 得 `f1_pa`；ILM 命中走 `ifu_ilm_req_*`（无 ITLB） |
 | **背压** | — | `ipipe_ifu_stall`、`fq_full_stall`、`fetch_stall`；`~bpu_rd_ready` 可挡 redirect-for-CTI |
 
-**`f1` → `f2`：** `f2_valid ← f1_valid & ~f2_kill`（见 S2）。
+**`f1` → `f2`：** `f2_valid ← f1_valid & ~f2_kill`（见 IC）。
 
 ---
 
-## S2 — IC（取指数据：`f2` → FQ）
+## IC（取指返回：`f2` → FQ）
 
 | 级 | 寄存器 | 本拍动作 |
 |----|--------|----------|
@@ -80,9 +70,10 @@
 
 ### FQ — Fetch Queue
 
-夹在 **S2 与 S3** 之间，深度 4、双宽（每拍最多出 `fq_i0`/`fq_i1` 两条）。
+夹在 **IC 与 ID** 之间，深度 4、双宽（每拍最多出 `fq_i0`/`fq_i1` 两条）。
 
-![FQ 结构](ax46mpv/fq.svg)
+- **入队：** IC `fetch_valid` → `fq_wr` 写 `s0[wptr]`（环形 RAM，每项 75b）
+- **出队：** `fq_rd` 当 `fq_i0_ready & fq_i0_valid`（及 i1）→ `fq_i0`/`fq_i1` 送 ID
 
 | 信号 | 方向 | 含义 |
 |------|------|------|
@@ -92,16 +83,14 @@
 | `fq_i0_ready` | ID→FQ | `ifu_i0_ready` ← `id_ready[0]` 等 |
 | `fetch_kill` | 控制 | redirect 时清 wptr/rptr |
 
-**满：** `fq_full_stall = (ost_max_num == FQ_DEPTH) & ~redirect` → 停 S1 取指。  
+**满：** `fq_full_stall = (ost_max_num == FQ_DEPTH) & ~redirect` → 停 IF 取指。  
 **项内容：** `{valid[3:0], bblk_ecc, xcpt[3:0], bblk_end, bblk_start, inst[63:0]}`。
 
-**FQ → S3：** `ifu_i0_valid = fq_i0_valid`；`ifu_i0_ready` 由 `id_ready[0]` 决定（ID 能收才 pop）。
+**FQ → ID：** `ifu_i0_valid = fq_i0_valid`；`ifu_i0_ready` 由 `id_ready[0]` 决定（ID 能收才 pop）。
 
 ---
 
-## S3 — ID（译码）
-
-**文件：** `kv_dec.v`, `kv_uins_ctl.v`（在 `kv_ipipe` 内）
+## ID（译码）
 
 | 动作 | 实现 |
 |------|------|
@@ -111,19 +100,18 @@
 | 背压 IF | `ifd_stall[0]`：vector resume / EX9 wait；`ifd_stall[1]` 级联 i1 |
 | 推进 IIQ | `iiq_w_valid = {id_i1_alive,id_i0_alive}`，`iiq_w_ready = id_ready` |
 
-**输出：** `id_i0_pc`, `id_i0_ctrl`, `id_i0_instr`, `id_i0_pred_info` 等 → **写入 IIQ**（详见 S4 IIQ 小节）。
+**输出：** `id_i0_pc`, `id_i0_ctrl`, `id_i0_instr`, `id_i0_pred_info` 等 → **写入 IIQ**（详见 IS 的 IIQ 小节）。
 
 ---
 
-## S4 — IS（发射）
+## IS（发射）
 
-**文件：** `kv_iiq_wrap.v`, `kv_iiu.v`, `kv_iiu_scb.v`
+### IIQ — Issue Instruction Queue
 
-### IIQ — Issue Instruction Queue（ID↔IS，`kv_iiq.v`）
+夹在 **ID 与 IS** 之间，深度 4、双宽（每拍最多 push/pop 各 2 项）。
 
-夹在 **S3 与 S4** 之间，深度 4、双宽（每拍最多 push/pop 各 2 项）。
-
-![IIQ 结构](ax46mpv/iiq.svg)
+- **push：** `iiq_w_valid = {id_i1_alive,id_i0_alive}`，`iiq_w_ready = id_ready`
+- **pop：** `iiq_r_ready = ii_ready`；pop 后 `kv_iiq_wrap` 再跑 `kv_dec` → `ii_i0/i1_ctrl`
 
 | 信号 | 连接 |
 |------|------|
@@ -136,7 +124,7 @@
 
 **背压：** IS stall 时 `ii_ready=0` 不 pop，但 ID 在 `iiq_w_ready=1` 时仍可 push；写满 4 项后 `id_ready=0`，FQ 亦停 pop（见时序图 T16）。
 
-### 4.1 流水行为
+### 流水行为
 
 | 动作 | 实现 |
 |------|------|
@@ -147,7 +135,7 @@
 
 **IIQ flush：** `iiq_flush = mm_redirect_final | wb_redirect | resume`
 
-### 4.2 旁路网络（IS 级操作数）
+### 旁路网络（IS 级操作数）
 
 `kv_iiu_scb` 为每个源寄存器算 **18b bypass 向量**（高 9b=src2/rs2 侧，低 9b=src1/rs1 侧），`kv_ipipe` 中 `rs1_rf_rdata` 用 `ii_xrs_bypass[8:0]`：
 
@@ -202,7 +190,7 @@ ii_i0_bypass = {s190, s187};   // 18b → kv_ipipe 拆成 xrs1/xrs2
 
 **LS 基址旁路：** `ii_i0_ls_base_bypass` — 若 rs1 命中 **EX** 的 rd，强制为 0（基址不能从 EX forward，只能从 MM+）。
 
-### 4.3 Late 判定
+### Late 判定
 
 Late = 该操作数生产者结果 **在 LX 才可用**，EX 级不算 ALU。
 
@@ -240,7 +228,7 @@ late 标志链：`[149] → ex_mm[164] → mm_lx[146] → mm_lx[183]`，LX 上 `
 | [3] | `fu[6]` | MDU |
 | [4] | `fu[7]` | CSR |
 
-### 4.4 Hazard 与 Stall
+### Hazard 与 Stall
 
 **汇总方程（`kv_iiu.v`）：**
 
@@ -293,9 +281,7 @@ ii_i1_stall = ii_i0_stall | ii_i1_raw_hazard | ii_i1_struct_hazard | ii_i1_waw_h
 
 ---
 
-## S5 — EX（执行 / 发起）
-
-**文件：** `kv_ipipe.v`；执行单元在 `kv_core.v` 例化
+## EX（执行 / 发起）
 
 **寄存器：** `ex_valid`, `ex_src{1,2,3,4}_reg`, `ex_i0_pc`, `ex_i0_ctrl[223:0]`
 
@@ -313,7 +299,7 @@ ii_i1_stall = ii_i0_stall | ii_i1_raw_hazard | ii_i1_struct_hazard | ii_i1_waw_h
 
 ---
 
-## S6 — MM（访存解析 / 分支误判）
+## MM（访存解析 / 分支误判）
 
 **寄存器：** `mm_valid`, `mm_src*_reg`, `mm_i0_ctrl[215:0]`
 
@@ -330,7 +316,7 @@ ii_i1_stall = ii_i0_stall | ii_i1_raw_hazard | ii_i1_struct_hazard | ii_i1_waw_h
 
 ---
 
-## S7 — LX（晚执行 / 访存返回）
+## LX（晚执行 / 访存返回）
 
 **寄存器：** `lx_valid`, `lx_src*_reg`, `lx_i0_ctrl[204:0]`
 
@@ -348,7 +334,7 @@ ii_i1_stall = ii_i0_stall | ii_i1_raw_hazard | ii_i1_struct_hazard | ii_i1_waw_h
 
 ---
 
-## S8 — WB（写回 / 退休）
+## WB（写回 / 退休）
 
 **寄存器：** `wb_valid`, `wb_rd1_wdata_reg`, `wb_i0_ctrl[157:0]`
 
@@ -586,9 +572,9 @@ ii_i1_stall = ii_i0_stall | ii_i1_raw_hazard | ii_i1_struct_hazard | ii_i1_waw_h
 | 文件 | 内容 |
 |------|------|
 | `kv_core.v` | 顶层互联 |
-| `kv_ifu.v` | S1 IF + S2 IC + FQ |
-| `kv_ipipe.v` | S3–S8 主体、ALU/BRU 接线 |
-| `kv_iiu.v` / `kv_iiu_scb.v` | S4 IS：stall、bypass、late |
+| `kv_ifu.v` | IF + IC + FQ |
+| `kv_ipipe.v` | ID–WB 主体、ALU/BRU 接线 |
+| `kv_iiu.v` / `kv_iiu_scb.v` | IS：stall、bypass、late |
 | `kv_iiq_wrap.v` | IIQ |
 | `kv_dec.v` | 译码 |
 | `kv_lsu.v` | 访存 |
