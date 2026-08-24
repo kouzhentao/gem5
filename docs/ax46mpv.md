@@ -6,7 +6,7 @@ RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v`。
 
 ## F0
 
-选出本拍发给 I$/ILM 的地址 `req_addr`。
+选出发给 I$/ILM 的地址 `req_addr`。
 
 `req_addr` 是**取指请求地址**，同拍送到：
 
