@@ -6,7 +6,7 @@ RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/kv_ifu.v`。
 
 ## F0
 
-选出发给 I$/ILM 的地址 `req_addr`。
+F0 选出发给 I$/ILM 的地址 `req_addr`。
 
 - `ifu_icu_req_addr` → I$（`kv_icu`）
 - `ifu_ilm_req_addr` → ILM
