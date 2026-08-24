@@ -82,7 +82,32 @@
 
 ## 数据通路 vs 控制通路
 
-![数据通路 vs 控制通路](ax46mpv-data-ctrl.svg)
+```
+  数据通路                                    控制通路
+  ────────                                    ────────
+
+  PC/NPC                                      kv_iiu_scb hazard
+     │                                              │
+     ▼                                              ▼
+  instr 32b                                   ii_*_stall ──▶ IIQ
+     │                                              │
+     ▼                                         mm_i0_mispred
+  ctrl 375b                                           │
+     │                                                ▼
+     ▼                                          mm_redirect
+  ii_src1..4 64b                                        │
+     │                                                ▼
+     ▼                                          iiq_flush / kill
+  ex_src*_reg
+     ├──────────────────▶ alu0/1 @EX
+     ▼
+  mm_src*_reg
+     ▼
+  lx_src*_reg
+     └──────────────────▶ alu2/3 @LX
+
+                                              lx_stall ──▶ 停 II..LX
+```
 
 - **数据：** `instr` → `id_ctrl` → `ii_ctrl` → `ex/mm/lx/wb_ctrl` 随指令走；操作数 `ii_src*` → `ex_src*_reg` → `mm_src*_reg` → `lx_src*_reg`。
 - **控制：** `kv_iiu_scb` 在 IS 级产生 `stall`/`bypass`/`late`；`mm_redirect`/`wb_kill` 在 MM/WB 级 flush；`lx_stall` 冻结 II→LX 全部流水寄存器。
