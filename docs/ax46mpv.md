@@ -2,45 +2,39 @@
 
 RTL：`docs/ax45mpv/andes_ip/kv_core/ucore/hdl/`（按 46 `cfg.txt` 实例化）。
 
-8 级顺序双发流水线。FQ(4)、IIQ(4) 是级间双宽 FIFO，不算流水级。
+9 级顺序双发流水线。FQ(4)、IIQ(4) 是级间双宽 FIFO，不算流水级。
 
 | 级 | 名称 | 本拍干什么 |
 |----|------|-----------|
-| 1 | IF | 算 next PC，发取指请求 |
-| 2 | IC | 等 I$/ILM 返回，入 FQ |
-| 3 | ID | 译码，入 IIQ |
-| 4 | IS | IIQ 出队，查 hazard，发射 |
-| 5 | EX | early ALU/BRU，发 LSU/MDU 请求 |
-| 6 | MM | 分支误判判定，BTB 更新 |
-| 7 | LX | late ALU/BRU，LSU/MDU 响应合入 |
-| 8 | WB | 写回，退休 |
+| 1 | f0 | 锁 `f0_pc`；组合选 `req_addr` |
+| 2 | f1 | `f1_va <= req_addr`；ITLB 查；发 I$/ILM 请求 |
+| 3 | f2 | `f2 <= f1`；等返回；入 FQ |
+| 4 | ID | 译码，入 IIQ |
+| 5 | IS | IIQ 出队，查 hazard，发射 |
+| 6 | EX | early ALU/BRU，发 LSU/MDU 请求 |
+| 7 | MM | 分支误判判定，BTB 更新 |
+| 8 | LX | late ALU/BRU，LSU/MDU 响应合入 |
+| 9 | WB | 写回，退休 |
 
 ---
 
-## IF — 取指地址
+## f0 — PC 选择
 
-**PC 怎么来：**
+- 锁 `f0_pc`：redirect/resume/retry/prefetch/recover 等路径置 `f0_valid`。
+- 组合选 `req_addr`：`redirect ? redirect_pc : f0_valid ? f0_pc : target_pc`。
+- `target_pc` 来自 `kv_pq`：BTB 命中 → 预测目标；否则 → `seq_pc`（当前 8B 块 +8）。
 
-- 正常顺序：BTB 命中走预测目标；否则 `seq_pc` = 当前 8B 块 +8。
-- 改向：`redirect_pc` 优先级最高。
-- 多拍路径：redirect 等 BPU 不 ready 时，PC 锁在 `f0_pc`，下拍继续发。
+## f1 — 地址打拍 + ITLB
 
-**两拍寄存器：**
+- `f1_va <= req_addr`（`fetch_issue` 时）。
+- ITLB 查 `f1_va` → `f1_pa`。
+- 发 ICU/ILM 请求；I$ VIPT：index `[10:6]`（页内 VA=PA），tag `f1_pa` 高位。
 
-- `f0` 拍：锁 `f0_pc`；组合选出 `req_addr` 发请求。
-- `f1` 拍：`f1_va` 打进来；ITLB 查 `f1_va` 得 `f1_pa`；发 I$/ILM 请求。
+## f2 — 取指返回
 
-I$ 是 VIPT：index 用地址 `[10:6]`（4KiB 页内 VA=PA），tag 用 `f1_pa` 高位。
-
----
-
-## IC — 取指数据
-
-- `f2` 拍：`f2` 锁 `f1` 的 VA/PA；等 I$/ILM 返回指令。
-- miss 处理：I$ miss 进 `ST_MH` 等总线回填；ITLB miss 进 `ST_FILL_TLB`。
-- 返回后：RVC 拆包、双发对齐，生成 `ifu_i0/i1_pc` 和预测信息，写入 **FQ(4)**。
-
----
+- `f2 <= f1`；等 I$/ILM 返回指令。
+- miss 处理：I$ miss 进 `ST_MH`；ITLB miss 进 `ST_FILL_TLB`。
+- 返回后 RVC 拆包、双发对齐，生成 `ifu_i0/i1_pc`，写入 **FQ(4)**。
 
 ## ID — 译码
 
