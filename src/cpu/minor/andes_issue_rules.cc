@@ -133,6 +133,14 @@ andesSameCycleWAWAllowed(MinorDynInstPtr first, MinorDynInstPtr second,
                         return false;
                     continue;
                 }
+                if (andesSameCycleFpMisFmvToIntForward(first, second) &&
+                    dest_a.classValue() == IntRegClass) {
+                    if (andesSrcNeedsLatePath(scoreboard, second,
+                            thread_context, cant_forward_from_fu_indices,
+                            now))
+                        return false;
+                    continue;
+                }
                 return false;
             }
         }
@@ -200,6 +208,29 @@ andesSameCycleEarlyIntForward(MinorDynInstPtr first, MinorDynInstPtr second)
 }
 
 bool
+andesSameCycleFpMisFmvToIntForward(MinorDynInstPtr first,
+    MinorDynInstPtr second)
+{
+    /* kv_iiu_scb s251: fu[16]/fu[17] → fu[0]|fu[8] (~bogus on i1 BR). */
+    if (!first || !second || first->isFault() || second->isFault())
+        return false;
+    if (first->andesLatePath)
+        return false;
+    StaticInstPtr a = first->staticInst;
+    StaticInstPtr b = second->staticInst;
+    if (a->isMemRef() || b->isMemRef())
+        return false;
+    const OpClass aop = a->opClass();
+    if (aop != enums::FloatMisc)
+        return false;
+    if (b->opClass() == enums::IntAlu && !b->isControl())
+        return true;
+    if (b->isControl() && b->isInteger())
+        return true;
+    return false;
+}
+
+bool
 andesSrcNeedsLatePath(Scoreboard &scoreboard, MinorDynInstPtr inst,
     ThreadContext *thread_context,
     const std::vector<bool> &cant_forward_from_fu_indices, Cycles now)
@@ -253,6 +284,20 @@ andesIntShouldUseLateFU(Scoreboard &scoreboard, MinorDynInstPtr inst,
         return false;
     StaticInstPtr s = inst->staticInst;
     if (!s->isInteger() || s->isMemRef() || andesOpUsesMdu(inst))
+        return false;
+    return andesSrcNeedsLatePath(scoreboard, inst, thread_context,
+        cant_forward_from_fu_indices, now);
+}
+
+bool
+andesBranchShouldUseLatePath(Scoreboard &scoreboard, MinorDynInstPtr inst,
+    ThreadContext *thread_context,
+    const std::vector<bool> &cant_forward_from_fu_indices, Cycles now)
+{
+    if (!inst || inst->isFault() || inst->isBubble())
+        return false;
+    StaticInstPtr s = inst->staticInst;
+    if (!s->isControl())
         return false;
     return andesSrcNeedsLatePath(scoreboard, inst, thread_context,
         cant_forward_from_fu_indices, now);

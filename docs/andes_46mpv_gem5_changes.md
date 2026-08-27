@@ -107,6 +107,9 @@ FOCUS 做完再换下一项；禁止「顺手改一点别处」。
 | `enableAndesNbloadHazard` | **现含义**：打开上述 loadb 同拍旁路；**不再**把所有 load 标 unpredictable | cfg `NON_BLOCKING=yes`；outstanding 靠 MSHR/maxAccesses |
 | Load 记分板 markup | 仅 `extraAssumedLat==0` 才 unpredictable（已撤回「凡 load 皆不可预测」） | 否则废掉 MemFU hit 前递，和 RTL「只有 outstanding miss 才 nbload_hazard」相反 |
 | 误预测惩罚 5 / 7 | `executeBranchMispredictPenalty` / `…Late`；仅 `BadlyPredictedBranch*`；**Late=`andesLatePath`**（BR 在 Pred，勿用 fuIndex） | DS22.8 EX/LX |
+| **P4-gem5-map** cantForward | `ANDES_CANT_FORWARD_FROM_FU_INDICES` 统一 late/MDU/FP/Mem/Misc；补 `AndesLateIntFU`/`Mdu`/`FloatSimd` cantForward | §9.1 bit0=0 |
+| **P4-gem5-map** s251 FP | `andesSameCycleFpMisFmvToIntForward` term6–7 | FMIS/FMV→Int/BR 同拍 RAW |
+| **P4-gem5-pred-late** | `andesBranchShouldUseLatePath` + Pred issue 时清 cantForward → MM/LX bypass lat | ii_*_late BR @ LX |
 
 ### 2.6 近期纠正（曾做错、已改回）
 

@@ -52,6 +52,27 @@ ANDES_DPF_QUEUE = 4              # PF queue (structure; entries from cfg)
 ANDES_BYPASS_EX = 3
 ANDES_BYPASS_MM = 1
 
+# AndesFUPool indices (ax46mpv_issue_hazard.md §9.1; order in AndesFUPool):
+# 0-1 IntEarly (alu0/1), 2-3 IntLate (alu2/3), 4 MDU, 5 FP, 6 Pred, 7 Mem, 8 Misc.
+# RTL ii_ex_rd*_fu bit0=0 producers → no EX bypass; consumer ii_*_late or stall.
+ANDES_FU_INT_EARLY0 = 0
+ANDES_FU_INT_EARLY1 = 1
+ANDES_FU_INT_LATE0 = 2
+ANDES_FU_INT_LATE1 = 3
+ANDES_FU_MDU = 4
+ANDES_FU_FP = 5
+ANDES_FU_PRED = 6
+ANDES_FU_MEM = 7
+ANDES_FU_MISC = 8
+ANDES_CANT_FORWARD_FROM_FU_INDICES = [
+    ANDES_FU_INT_LATE0,
+    ANDES_FU_INT_LATE1,
+    ANDES_FU_MDU,
+    ANDES_FU_FP,
+    ANDES_FU_MEM,
+    ANDES_FU_MISC,
+]
+
 # RISC-V LOAD opcode=0000011; mask opcode|funct3
 _RV_LOAD_MASK = 0x707F
 _RV_LW = 0x2003
@@ -286,7 +307,7 @@ class AndesIntFU(MinorDefaultIntFU):
     opLat = 1
     issueLat = 1
     # AndesFUPool: 0-1 early Int, 2-3 late Int, 4 MDU, 5 FP, 6 Pred, 7 Mem, 8 Misc
-    cantForwardFromFUIndices = [2, 3, 4, 5, 7, 8]
+    cantForwardFromFUIndices = ANDES_CANT_FORWARD_FROM_FU_INDICES
     timings = [
         MinorFUTiming(description="IntEarly", srcRegsRelativeLats=[ANDES_BYPASS_EX])
     ]
@@ -298,6 +319,8 @@ class AndesLateIntFU(MinorDefaultIntFU):
     """
     opLat = 1
     issueLat = 1
+    # Late consumer still cannot EX-forward from bit0=0 producers (Mem/MDU/…).
+    cantForwardFromFUIndices = ANDES_CANT_FORWARD_FROM_FU_INDICES
     timings = [
         MinorFUTiming(
             description="IntLate",
@@ -313,7 +336,7 @@ class AndesPredFU(MinorDefaultPredFU):
     (bit0=0); mirror AndesIntFU cantForward (Pred has no int dest to list)."""
     opLat = 1
     issueLat = 1
-    cantForwardFromFUIndices = [2, 3, 4, 5, 7, 8]
+    cantForwardFromFUIndices = ANDES_CANT_FORWARD_FROM_FU_INDICES
     timings = [
         MinorFUTiming(description="Pred", srcRegsRelativeLats=[ANDES_BYPASS_EX])
     ]
@@ -325,6 +348,7 @@ class AndesMduFU(MinorFU):
     opClasses = minorMakeOpClassSet(["IntMult", "IntDiv"])
     opLat = ANDES_MDU_MUL_LAT
     issueLat = 1
+    cantForwardFromFUIndices = ANDES_CANT_FORWARD_FROM_FU_INDICES
     timings = [
         MinorFUTiming(
             description="MulFast",
@@ -345,6 +369,7 @@ class AndesFloatSimdFU(MinorDefaultFloatSimdFU):
     """DS238 Tables 174–176 (DP supported): FMAC lat 4, FDIV.D 32, FMISC 2, FMV 1."""
     issueLat = 1
     opLat = 1
+    cantForwardFromFUIndices = ANDES_CANT_FORWARD_FROM_FU_INDICES
     timings = [
         MinorFUTiming(
             description="Fmac",

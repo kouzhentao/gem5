@@ -147,3 +147,15 @@ One block per signal/hazard. Source priority: cfg.txt → DS238 → ucore RTL.
 - **When:** CM scalar ruler only; accept ~3.29 vs ~6.3 until Minor gets stage tags upstream.
 - **Blocks / allows:** No further exlx prototypes; document scoreboard approx as permanent for this project.
 - **gem5:** `enableAndesStageOccupancy=False` frozen. **Default** if A/B not requested.
+
+## cantForward-fu-map — bit0=0 producers (`P4-gem5-map`)
+
+- **When:** II issue Int/Pred/MDU/FP consumer reads GPR; producer FU tag has ii_ex_rd*_fu bit0=0 (late Int, MDU, FP, Mem, Misc).
+- **Blocks / allows:** No EX bypass → `cantForwardFromFUIndices` on early Int/Pred/Late/MDU/FP; `andesSrcNeedsLatePath` → route Int to `AndesLateIntFU` or mark `andesLatePath` on BR.
+- **gem5:** `ANDES_CANT_FORWARD_FROM_FU_INDICES=[2..5,7,8]` in `andes_46mpv_scalar.py`; `andesSameCycleFpMisFmvToIntForward` for s251 fu[16/17]→Int/BR.
+
+## pred-late-bypass — Pred FU @ LX bru (`P4-gem5-pred-late`)
+
+- **When:** II issue BR/JAL on Pred; any src from bit0=0 producer still in MM/LX (`~ii_*_mm_bypass[0]`).
+- **Blocks / allows:** No stall-to-WB on Pred; issue with `andesLatePath` + `srcRegsRelativeLats` bypass; mispredict penalty 7.
+- **gem5:** `andesBranchShouldUseLatePath`; execute clears `cantForward` mask for Pred late issue — **partial**; no separate LX bru FU.

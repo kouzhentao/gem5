@@ -852,18 +852,36 @@ Execute::issue(ThreadID thread_id)
                             andesLxStageSlots) {
                         DPRINTF(MinorExecute, "Can't issue inst: %s Andes"
                             " LX stage slots full\n", *inst);
-                    } else if (!scoreboard[thread_id].canInstIssue(inst,
-                        src_latencies, cant_forward_from_fu_indices,
-                        cpu.curCycle(), cpu.getContext(thread_id),
-                        enableAndesWAWHazard) &&
-                        /* nbload marks load dest unpredictable; still allow
-                         * same-cycle loadb→int (RTL mm_ls_loadb late path). */
-                        !(enableAndesNbloadHazard && first_issued_inst &&
-                            andesSameCycleLateLoadUse(first_issued_inst, inst)))
-                    {
-                        DPRINTF(MinorExecute, "Can't issue inst: %s yet\n",
-                            *inst);
                     } else {
+                        /* Pred @ LX: bit0=0 producers use MM/LX bypass timing,
+                         * not cantForward stall-to-WB (kv_iiu ii_*_late BR). */
+                        const std::vector<bool> *issue_cant_forward =
+                            cant_forward_from_fu_indices;
+                        std::vector<bool> pred_no_cant_forward;
+                        if (enableAndesDualIssueRules && timing &&
+                            timing->description == "Pred" &&
+                            andesBranchShouldUseLatePath(
+                                scoreboard[thread_id], inst,
+                                cpu.getContext(thread_id),
+                                fu->cantForwardFromFUIndices,
+                                cpu.curCycle())) {
+                            pred_no_cant_forward.assign(
+                                fu->cantForwardFromFUIndices.size(), false);
+                            issue_cant_forward = &pred_no_cant_forward;
+                        }
+                        if (!scoreboard[thread_id].canInstIssue(inst,
+                            src_latencies, issue_cant_forward,
+                            cpu.curCycle(), cpu.getContext(thread_id),
+                            enableAndesWAWHazard) &&
+                            /* nbload marks load dest unpredictable; still allow
+                             * same-cycle loadb→int (RTL mm_ls_loadb late path). */
+                            !(enableAndesNbloadHazard && first_issued_inst &&
+                                andesSameCycleLateLoadUse(first_issued_inst,
+                                    inst)))
+                        {
+                            DPRINTF(MinorExecute, "Can't issue inst: %s yet\n",
+                                *inst);
+                        } else {
                         /* Can insert the instruction into this FU */
                         DPRINTF(MinorExecute, "Issuing inst: %s"
                             " into FU %d\n", *inst,
@@ -991,6 +1009,7 @@ Execute::issue(ThreadID thread_id)
                         thread.inFlightInsts->push(fu_inst);
 
                         issued = true;
+                        }
                     }
                 }
 

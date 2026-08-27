@@ -39,6 +39,10 @@ bool andesSameCycleLateLoadUse(MinorDynInstPtr first, MinorDynInstPtr second);
 bool andesSameCycleEarlyIntForward(MinorDynInstPtr first,
     MinorDynInstPtr second);
 
+/** RTL s251 terms 6–7: i0 FP FMIS/FMV (fu[16/17]) → i1 Int/BR same-cycle RAW OK. */
+bool andesSameCycleFpMisFmvToIntForward(MinorDynInstPtr first,
+    MinorDynInstPtr second);
+
 inline bool
 andesOpUsesMdu(const MinorDynInstPtr &inst)
 {
@@ -153,6 +157,11 @@ bool andesSrcNeedsLatePath(Scoreboard &scoreboard, MinorDynInstPtr inst,
  * Early IntFU: if andesSrcNeedsLatePath, skip IntEarly → IntLate.
  */
 bool andesIntShouldUseLateFU(Scoreboard &scoreboard, MinorDynInstPtr inst,
+    ThreadContext *thread_context,
+    const std::vector<bool> &cant_forward_from_fu_indices, Cycles now);
+
+/** Pred FU: BR/JAL with bit0=0 src → LX bru (andesLatePath); use MM/LX bypass lat. */
+bool andesBranchShouldUseLatePath(Scoreboard &scoreboard, MinorDynInstPtr inst,
     ThreadContext *thread_context,
     const std::vector<bool> &cant_forward_from_fu_indices, Cycles now);
 

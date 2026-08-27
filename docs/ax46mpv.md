@@ -358,7 +358,22 @@ D$ 预取（`dprefetch_en`）在 LSU，与 IFU 无关。
 
 # Backend（Issue / Hazard / Bypass）
 
-**详表：** [`docs/ax46mpv_issue_hazard.md`](ax46mpv_issue_hazard.md)（agent 逐 tick 扩展）。
+**详表：** [`docs/ax46mpv_issue_hazard.md`](ax46mpv_issue_hazard.md) — P4-doc 表已齐，可开 8-stage 设计。
+
+## 8 级流水 + FU 框图
+
+```
+                    ┌── II (i0/i1) ── kv_iiu + iiu_scb + iiu_fscb
+                    │      ii_*_fu[25:0]  bypass  late  RAW/WAW
+FQ → ID → IS(IIQ) ──┤
+                    │   ┌──────── EX ────────┐   ┌──────── MM ────────┐   ┌──── LX ────┐   WB
+                    └──►│ alu0/1  bru0/1     │──►│ load data  FPU mid │──►│ alu2/3     │──►│
+                        │ MDU req  LSU addr  │   │ store cont         │   │ load final │   │
+                        │ fpu_i0/i1 (arith)  │   │ CSR presync        │   │ CSR read   │   │
+                        └────────────────────┘   └────────────────────┘   └────────────┘   │
+                              early Int/BR              bypass 站                 late Int/BR
+                        同拍可 EX∥LX：young@EX + old@LX（stage 站位，非延迟队列）
+```
 
 ## 8 级流水（标量）
 
@@ -378,7 +393,7 @@ FQ → ID → IS(IIQ) → II → EX → MM → LX → WB
 |------|------|------|------|
 | `id_ctrl` | 375b | `kv_dec.v` | 译码：FU 类、reg、CSR、单发位 |
 | `ii_i0/i1_ctrl` | 375b | IIQ | 同 id；抽 `ii_*_fu` |
-| `ex_i0/i1_ctrl` | 205b | `ii_ex_*_ctrl` 重映射 | EX 级 ALU/MDU/LS（**bit 编号与 II 不同**） |
+| `ex_i0/i1_ctrl` | **224b** `[223:0]` | `ii_ex_*_ctrl` 重映射 | EX 级 ALU/MDU/LS（**bit 编号与 II 不同**，见 issue_hazard §4.5） |
 
 ## gem5
 

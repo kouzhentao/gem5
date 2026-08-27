@@ -1,4 +1,4 @@
-FOCUS: P4-doc-02
-Status: Issue/hazard doc bootstrap done; NEXT=ctrl 248-281 reg fields in ax46mpv_issue_hazard.md
-Thu, 27 Aug 2026 10:45:00 +0800
-Handoff: docs/ax46mpv_issue_hazard.md (§1-6,§8 exlx=C); ax46mpv.md Backend; queue P4-doc-02..10
+FOCUS: P4-gem5-8stage-A
+Status: P4-gauge done — CoreMark 3.11 CM/MHz (46 target 6.3); build OK
+Thu, 27 Aug 2026 11:45:00 +0800
+Handoff: gem5.fast linked; gauge /tmp/coremark_p4.log
