@@ -1,20 +1,20 @@
 # Paste into Cursor → Automations → New → Schedule (every 5 min)
-# Repo: this workspace (/home/kou/gem5). Cloud agent recommended.
+# Repo: /home/kou/gem5
 
-Read ANDES_STATUS.txt (FOCUS) and ANDES_WORK_QUEUE.md (NEXT row).
+Read ANDES_STATUS.txt (FOCUS) and ANDES_WORK_QUEUE.md (first TODO in NEXT table).
 
 Do exactly ONE queue item per run:
-- RTL read → append one 3-line rule block to docs/andes_46mpv_rtl_rules.md
-- OR implement gem5 mapping for an existing rule in that file
+- P4-doc-* : extend docs/ax46mpv_issue_hazard.md (mark §7 row done)
+- OR RTL → 3-line rule in docs/andes_46mpv_rtl_rules.md
+- OR gem5 map for existing rule
 
-Then update ANDES_WORK_QUEUE.md (advance NEXT), ANDES_STATUS.txt, append ANDES_STATUS.log.
+Then update ANDES_WORK_QUEUE.md (advance NEXT), ANDES_STATUS.txt (FOCUS=next id), append ANDES_STATUS.log.
 
-First line of reply: Status: <one-line summary> (not "Loop tick #").
+First line of reply: Status: <one-line summary>.
 
-Forbidden: brief-only status, BP re-audit, opLat/issueLimit tuning, gauge-hold without artifact.
-CoreMark ~6.3 is ruler only, not a tuning target.
+Forbidden: exlx A/B impl, brief-only status, BP/cfg re-audit, opLat/issueLimit tuning, gauge-hold without doc progress.
 
-Truth order: cfg.txt → DS238 → ucore RTL (kv_iiu_scb, kv_ipipe, kv_lsu*, kv_core).
-Do NOT use andes_vip ax45mpv_core_top sample localparams.
+Truth order: cfg.txt → DS238 → ucore RTL.
+Doc-first: hazard/issue/bypass in ax46mpv_issue_hazard.md before 8-stage gem5.
 
-Current NEXT is usually P3-gem5-ex-lx (EX∥LX stage model, ALU stays 1cy).
+Current FOCUS: see ANDES_STATUS.txt (P4-doc-02 ctrl reg fields).

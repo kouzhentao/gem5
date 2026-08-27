@@ -1,65 +1,73 @@
 # Andes alignment work queue (agent ticks one `NEXT` per wake)
 
-Tick contract: complete **one** row below, or implement gem5 for an existing rule in `docs/andes_46mpv_rtl_rules.md`.
+Tick contract: complete **one** row in **P4-doc** (extend `docs/ax46mpv_issue_hazard.md`) **OR** one RTL rule in `docs/andes_46mpv_rtl_rules.md` **OR** gem5 map for existing rule.
 
-## NEXT (do this first)
+**Doc-first policy:** hazard / issue / bypass / ctrl mapping **must be in `ax46mpv_issue_hazard.md` before gem5 8-stage work.** exlx frozen (**C**).
 
-| id | block | action |
-|----|-------|--------|
-| **P3-exlx-design** | gem5 design | **done** — fix requirements in `rtl_rules.md` (exlx-design); impl frozen |
-| **P3-exlx-impl** | gem5 | **blocked** — user pick A/B/C in `rtl_rules.md` exlx-pick |
-| **P3-exlx-pick** | design | Approach options A/B/C documented — **done** |
-| **P3-post-rebase** | verify | `execute.o` builds on `scalar` @ upstream/stable `62c7bf2848` — **done** |
+Handoff: read `ANDES_STATUS.txt` FOCUS → do ONE row → update STATUS + this file + append `ANDES_STATUS.log`.
 
-### P3-gem5-ex-lx sub-steps (in order)
+---
 
-| step | action | status |
-|------|--------|--------|
-| exlx-1 | Document RTL rule (EX∥LX) in `rtl_rules.md` | done |
-| exlx-2 | Map Minor gap: issue uses 4 FU pipes but no stage tag; scoreboard ≠ pipe occupancy | done |
-| exlx-3 | Prototype: `andesStageOccupancy` — late issued inst frees early FU same cycle | done |
-| exlx-4 | Gauge only after exlx-3; keep `enableAndesIiLxOverlap=False` until then | done — **deadlock** (16 commit/20B ticks); BM off |
-| exlx-3b | Fix LX pending deadlock (inFlight vs FU drain) | partial — idle+pre-commit drain; still 16inst stall; redesign |
-| exlx-3c | Redesign: `minimumCommitCycle` + LX slot holds (no pending queue) | done — **deadlock** (16 inst); BM off |
-| exlx-freeze | Stage-occupancy prototypes frozen until Minor stage model rethink | frozen → P3-ipipe-bypass |
+## NEXT (do this first — top incomplete row)
 
-### exlx-A impl sketch (if user picks A)
+| id | block | action | status |
+|----|-------|--------|--------|
+| **P4-doc-02** | `ax46mpv_issue_hazard.md` §4 | 补全 ctrl **248–281** reg 域（rs/rd/ren/wen）RTL 行号 | **TODO** |
+| P4-doc-03 | §4 | `ex_i*_ctrl[204:0]` 完整 II→EX 重映射表 | TODO |
+| P4-doc-04 | §5 | bypass `s187–s200` 逐信号真值表（`kv_iiu_scb.v`） | TODO |
+| P4-doc-05 | §3 | RAW **s251** 全项展开 + 例子 | TODO |
+| P4-doc-06 | §5 | FP bypass `kv_iiu_fscb.v` 表 | TODO |
+| P4-doc-07 | §1 | FPU/LSU/CSR 在各 stage 行为一节 | TODO |
+| P4-doc-08 | §3 | DS238 Table **168/169** 原文列 ↔ RTL 行号 | TODO |
+| P4-doc-09 | §9 | `andes_issue_rules.cc` 逐条 ↔ `kv_iiu_scb` 行号 | TODO |
+| P4-doc-10 | `ax46mpv.md` | Backend 框图（II/EX/MM/LX + FU） | TODO |
+| P4-rtl-dec | `kv_dec.v` | ≥1 条 ctrl 位 → 3-line rule in `rtl_rules.md` | TODO |
+| P4-gem5-8stage | design | 8 级 stage 模型设计草图（**blocked** until P4-doc-02..09 done） | blocked |
 
-| step | action |
-|------|--------|
-| exlx-A1 | Strip `minimumCommitCycle` / `head_inst_might_commit` hooks from late path (`execute.cc` L968–969, L1592, L1881) |
-| exlx-A2 | Keep `andesLxStageHolds` + slot block @ issue only (`L851–852`); late always `fu->push` |
-| exlx-A3 | Gauge once; if deadlock → revert, try B |
-
-## P1 cfg.txt (verify → rule if missing)
+### Done (P4 bootstrap)
 
 | id | status | notes |
 |----|--------|-------|
-| P1-cache-mshr | done | MSHR 8/16, SB 8, L1 32K/4way — `andes_46mpv_scalar.py` |
-| P1-btb-bp | done | BTB 256, BiMode 256, RAS 4 — frozen BP residual |
-| P1-lsu-nb | done | `NDS_NON_BLOCKING_SUPPORT`, `NDS_LSU_LOW_LATENCY` |
-| P1-write-around | gap | cfg yes; classic L1 no WA — frozen |
+| P4-doc-00 | done | 创建 `docs/ax46mpv_issue_hazard.md` + `ax46mpv.md` Backend 链 |
+| P4-doc-01 | done | §2 fu 表、§3 hazard 表、§5 bypass 首版、§8 exlx=C |
+| P3-exlx-pick | done | **选 C** — LX=stage；A/B 非 stage 忠实；不实现 exlx |
 
-## P2 DS238 (verify → rule if missing)
+---
 
-| id | status | notes |
-|----|--------|-------|
-| P2-DS168-dual | done | dual-issue matrix → `andes_issue_rules.cc` |
-| P2-DS169-loaduse | done | W/D 0cy, B/H 1cy → MemFU `extraAssumedLat` |
-| P2-DS172-muldiv | done | fast mul 1cy, div expr |
-| P2-DS228-mispred | done | EX 5 / LX 7 → `executeBranchMispredictPenalty*` |
+## P1 cfg.txt — done
 
-## P3 RTL (systematic 3-line rules)
+| id | status |
+|----|--------|
+| P1-cache-mshr / P1-btb-bp / P1-lsu-nb | done |
+| P1-write-around | gap frozen |
 
-| id | file | status |
-|----|------|--------|
-| P3-iiu-scb | `kv_iiu_scb.v` | done — 6 rules in `rtl_rules.md` (late/struct/raw/waw) |
-| P3-ipipe-bypass | `kv_ipipe.v` | done — 3 rules (operand mux, ls_base, i1 load-consumer) |
-| P3-ipipe-loadb | `kv_ipipe.v` | done — 3 rules (ex_ls_loadb, nbload_hazard, ls_cmt_nbload) |
-| P3-lsu-nbload | `kv_lsu*.v` | done — 3 rules (nbload_resp, ROB nbload, m2_nbload_hazard) |
-| P3-kv_core-alu | `kv_core.v` | done |
-| P3-gem5-ex-lx | gem5 map | frozen — exlx-3c deadlock; BM off |
+## P2 DS238 — done
+
+| id | status |
+|----|--------|
+| P2-DS168-dual → `andes_issue_rules.cc` | done |
+| P2-DS169-loaduse | done |
+| P2-DS172-muldiv | done |
+| P2-DS228-mispred | done |
+
+## P3 RTL rules — done (unless P4-rtl-dec extends)
+
+| id | status |
+|----|--------|
+| P3-iiu-scb / ipipe-bypass / loadb / lsu-nbload / kv_core-alu | done |
+| P3-gem5-ex-lx | **frozen C** |
 
 ## Closed (do not reopen without user)
 
-gauge-hold cfg-scrub, BP residual, opLat games, fake-wide issue, II/LX `resultLat` trials (mechanism kept, BM off).
+exlx A/B prototypes, gauge-hold, BP re-audit, opLat games, fake-wide issue.
+
+---
+
+## Agent wake prompt (paste Automations)
+
+```
+Read ANDES_STATUS.txt FOCUS and ANDES_WORK_QUEUE.md — first TODO in NEXT table.
+Extend docs/ax46mpv_issue_hazard.md for that id (mark §7 row done).
+Update ANDES_WORK_QUEUE.md, ANDES_STATUS.txt, append ANDES_STATUS.log.
+First line: Status: <one-line>. Forbidden: exlx impl, opLat tuning, brief-only.
+```

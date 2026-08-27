@@ -1,4 +1,4 @@
-FOCUS: P3-exlx-impl (blocked — pick A/B/C)
-Status: exlx-A impl sketch in queue. Awaiting user pick. BM 3.293.
-Sat, 22 Aug 2026 19:35:00 +0800
-Handoff: clone git@github.com:kouzhentao/gem5.git branch scalar; read ANDES_WORK_QUEUE.md NEXT; chat history not synced.
+FOCUS: P4-doc-02
+Status: Issue/hazard doc bootstrap done; NEXT=ctrl 248-281 reg fields in ax46mpv_issue_hazard.md
+Thu, 27 Aug 2026 10:45:00 +0800
+Handoff: docs/ax46mpv_issue_hazard.md (§1-6,§8 exlx=C); ax46mpv.md Backend; queue P4-doc-02..10
