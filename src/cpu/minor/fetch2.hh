@@ -45,6 +45,7 @@
 #ifndef __CPU_MINOR_FETCH2_HH__
 #define __CPU_MINOR_FETCH2_HH__
 
+#include <deque>
 #include <vector>
 
 #include "base/named.hh"
@@ -93,6 +94,16 @@ class Fetch2 : public Named
 
     /** Branch predictor passed from Python configuration */
     branch_prediction::BPredUnit &branchPredictor;
+
+    bool enableAndesBpuF2Ack;
+    Cycles andesBpuF2AckDelay;
+
+    struct AndesBpuPending {
+        MinorDynInstPtr inst;
+        Cycles decodeCycle;
+    };
+
+    std::vector<std::deque<AndesBpuPending>> bpuPending;
 
   public:
     /* Public so that Pipeline can pass it to Fetch1 */
@@ -193,6 +204,15 @@ class Fetch2 : public Named
      *  instruction's predicted... fields and also the branch which
      *  carries the prediction to Fetch1 */
     void predictBranch(MinorDynInstPtr inst, BranchData &branch);
+
+    void packInstOutput(MinorDynInstPtr inst, ThreadID tid,
+        Fetch2ThreadInfo &fetch_info, unsigned int &output_index,
+        ForwardInstData &insts_out);
+
+    bool stepAndesBpuF2Ack(ThreadID tid, unsigned int &output_index,
+        ForwardInstData &insts_out, BranchData &prediction);
+
+    void discardAndesBpuPending(ThreadID tid);
 
     /** Use the current threading policy to determine the next thread to
      *  fetch from. */

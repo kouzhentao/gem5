@@ -74,6 +74,8 @@ Fetch1::Fetch1(const std::string &name_,
     lineSnap(params.fetch1LineSnapWidth),
     maxLineWidth(params.fetch1LineWidth),
     fetchLimit(params.fetch1FetchLimit),
+    enableAndesFetchF0F1(params.enableAndesFetchF0F1),
+    andesFetchF1Delay(params.andesFetchF1Delay),
     fetchInfo(params.numThreads),
     threadPriority(0),
     requests(name_ + ".requests", "lines", params.fetch1FetchLimit),
@@ -175,6 +177,9 @@ Fetch1::fetchLine(ThreadID tid)
     DPRINTF(Fetch, "Inserting fetch into the fetch queue "
         "%s addr: 0x%x pc: %s line_offset: %d request_size: %d\n",
         request_id, aligned_pc, thread.fetchAddr, line_offset, request_size);
+    if (enableAndesFetchF0F1)
+        DPRINTF(Fetch, "Andes F0 fetch_issue tid=%d cycle=%d\n",
+            tid, cpu.curCycle());
 
     request->request->setContext(cpu.threads[tid]->getTC()->contextId());
     request->request->setVirt(
@@ -186,6 +191,7 @@ Fetch1::fetchLine(ThreadID tid)
     numFetchesInITLB++;
 
     request->state = FetchRequest::InTranslation;
+    request->f0IssueCycle = cpu.curCycle();
 
     /* Reserve space in the queues upstream of requests for results */
     transfers.reserve();
@@ -200,6 +206,9 @@ Fetch1::fetchLine(ThreadID tid)
         request, BaseMMU::Execute);
 
     lineSeqNum++;
+
+    if (enableAndesFetchF0F1)
+        thread.numOutstandingReq++;
 
     /* Step the PC for the next line onto the line aligned next address.
      * Note that as instructions can span lines, this PC is only a
@@ -270,7 +279,32 @@ Fetch1::handleTLBResponse(FetchRequestPtr response)
 
     response->state = FetchRequest::Translated;
 
-    tryToSendToTransfers(response);
+    if (enableAndesFetchF0F1 && response->fault == NoFault) {
+        response->state = FetchRequest::AwaitingF1;
+        DPRINTF(Fetch, "Andes F1 hold until cycle %d (F0@%d)\n",
+            response->f0IssueCycle + andesFetchF1Delay,
+            response->f0IssueCycle);
+    } else {
+        tryToSendToTransfers(response);
+    }
+}
+
+void
+Fetch1::stepAndesF1Stage()
+{
+    if (!enableAndesFetchF0F1 || requests.empty())
+        return;
+
+    FetchRequestPtr request = requests.front();
+    if (request->state != FetchRequest::AwaitingF1)
+        return;
+
+    if (cpu.curCycle() < request->f0IssueCycle + andesFetchF1Delay)
+        return;
+
+    DPRINTF(Fetch, "Andes F1 complete → I$ req: %s\n", request->id);
+    request->state = FetchRequest::Translated;
+    tryToSendToTransfers(request);
 }
 
 Fetch1::FetchRequest::~FetchRequest()
@@ -291,6 +325,11 @@ Fetch1::tryToSendToTransfers(FetchRequestPtr request)
     if (request->state == FetchRequest::InTranslation) {
         DPRINTF(Fetch, "Fetch still in translation, not issuing to"
             " memory\n");
+        return;
+    }
+
+    if (request->state == FetchRequest::AwaitingF1) {
+        DPRINTF(Fetch, "Fetch in Andes F1, not issuing to memory\n");
         return;
     }
 
@@ -358,6 +397,8 @@ Fetch1::tryToSend(FetchRequestPtr request)
 void
 Fetch1::stepQueues()
 {
+    stepAndesF1Stage();
+
     IcacheState old_icache_state = icacheState;
 
     switch (icacheState) {
@@ -519,6 +560,22 @@ Fetch1::changeStream(const BranchData &branch)
 }
 
 void
+Fetch1::purgeDiscardableRequests()
+{
+    while (!requests.empty() && requests.front()->isDiscardable()) {
+        FetchRequestPtr req = requests.front();
+        if (enableAndesFetchF0F1) {
+            fetchInfo[req->id.threadId].numOutstandingReq--;
+            DPRINTF(Fetch, "Andes redirect purge outstanding req %s "
+                "(tid=%d ost=%u)\n",
+                req->id, req->id.threadId,
+                fetchInfo[req->id.threadId].numOutstandingReq);
+        }
+        popAndDiscard(requests);
+    }
+}
+
+void
 Fetch1::updateExpectedSeqNums(const BranchData &branch)
 {
     Fetch1ThreadInfo &thread = fetchInfo[branch.threadId];
@@ -534,6 +591,8 @@ Fetch1::updateExpectedSeqNums(const BranchData &branch)
      *  actually set the prediction to an *older* value if new
      *  predictions have been discarded by execute */
     thread.predictionSeqNum = branch.newPredictionSeqNum;
+
+    purgeDiscardableRequests();
 }
 
 void
@@ -648,14 +707,23 @@ Fetch1::evaluate()
     if (numInFlightFetches() < fetchLimit) {
         ThreadID fetch_tid = getScheduledThread();
 
-        if (fetch_tid != InvalidThreadID) {
+        bool ost_ok = true;
+        if (enableAndesFetchF0F1 && fetch_tid != InvalidThreadID)
+            ost_ok = fetchInfo[fetch_tid].numOutstandingReq < fetchLimit;
+
+        if (fetch_tid != InvalidThreadID && ost_ok) {
             DPRINTF(Fetch, "Fetching from thread %d\n", fetch_tid);
 
             /* Generate fetch to selected thread */
             fetchLine(fetch_tid);
             /* Take up a slot in the fetch queue */
             nextStageReserve[fetch_tid].reserve();
-        } else {
+        } else if (fetch_tid != InvalidThreadID && enableAndesFetchF0F1) {
+            DPRINTF(Fetch, "Andes F0 req_ready=0 tid=%d outstanding=%u "
+                "limit=%u fetchAddr=0x%x\n",
+                fetch_tid, fetchInfo[fetch_tid].numOutstandingReq,
+                fetchLimit, fetchInfo[fetch_tid].fetchAddr);
+        } else if (fetch_tid == InvalidThreadID) {
             DPRINTF(Fetch, "No active threads available to fetch from\n");
         }
     }
@@ -675,6 +743,13 @@ Fetch1::evaluate()
         if (response->isDiscardable()) {
             nextStageReserve[response->id.threadId].freeReservation();
 
+            if (enableAndesFetchF0F1) {
+                fetchInfo[response->id.threadId].numOutstandingReq--;
+                DPRINTF(Fetch, "Andes outstanding-- on discard %s (ost=%u)\n",
+                    response->id,
+                    fetchInfo[response->id.threadId].numOutstandingReq);
+            }
+
             DPRINTF(Fetch, "Discarding translated fetch as it's for"
                 " an old stream\n");
 
@@ -686,6 +761,13 @@ Fetch1::evaluate()
                 response->id);
 
             processResponse(response, line_out);
+
+            if (enableAndesFetchF0F1) {
+                fetchInfo[response->id.threadId].numOutstandingReq--;
+                DPRINTF(Fetch, "Andes outstanding-- on F2 delivery %s (ost=%u)\n",
+                    response->id,
+                    fetchInfo[response->id.threadId].numOutstandingReq);
+            }
         }
 
         popAndDiscard(transfers);

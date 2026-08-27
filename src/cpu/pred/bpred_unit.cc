@@ -299,7 +299,11 @@ BPredUnit::predict(const StaticInstPtr &inst, const InstSeqNum &seqNum,
     if (hist->targetProvider == TargetProvider::NoTarget) {
         set(hist->target, pc);
         inst->advancePC(*hist->target);
-        hist->predTaken = false;
+        if (inst->isReturn() && branch_detected) {
+            hist->predTaken = true;
+        } else {
+            hist->predTaken = false;
+        }
     }
     stats.targetProvider[tid][hist->targetProvider]++;
 

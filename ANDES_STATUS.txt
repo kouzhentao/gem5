@@ -1,4 +1,4 @@
-FOCUS: P4-gem5-8stage-B
-Status: P4-gem5-8stage-A pushed — AndesStageTag on scoreboard; NEXT=bypass read tag
-Thu, 27 Aug 2026 11:50:00 +0800
-Handoff: enableAndesStageTags=True; Phase B = andesSrcNeedsLatePath from tag
+FOCUS: P5-bpu-gauge
+Status: P5 fetch F0/F1 + bpu f2ack + ret-taken restored; gauge pending
+Thu, 27 Aug 2026 16:20:00 +0800
+Handoff: enableAndesFetchF0F1=True enableAndesBpuF2Ack=True andesBpuF2AckDelay=2

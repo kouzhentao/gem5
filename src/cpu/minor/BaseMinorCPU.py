@@ -474,6 +474,20 @@ class BaseMinorCPU(BaseCPU):
         "Andes 8-stage Phase A: record AndesStageTag on scoreboard at issue "
         "(EX/MM/LX bypass stage + exBypassBit0). Timing unchanged until Phase B.",
     )
+    enableAndesFetchF0F1 = Param.Bool(
+        False,
+        "Andes kv_ifu: F0 fetch_issue then F1 ITLB/ICU latch before I$ req.",
+    )
+    andesFetchF1Delay = Param.Cycles(
+        1, "Min cycles from F0 fetch_issue to I$ ReadReq (RTL F1 stage)",
+    )
+    enableAndesBpuF2Ack = Param.Bool(
+        False,
+        "Andes kv_bpu: defer predictBranch until F2 bpu_rd_ack.",
+    )
+    andesBpuF2AckDelay = Param.Cycles(
+        2, "Cycles from Fetch2 control decode to BPU predict.",
+    )
 
     executeFuncUnits = Param.MinorFUPool(
         MinorDefaultFUPool(), "FUlines for this processor"

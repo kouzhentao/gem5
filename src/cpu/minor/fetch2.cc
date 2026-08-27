@@ -73,6 +73,9 @@ Fetch2::Fetch2(const std::string &name,
     outputWidth(params.decodeInputWidth),
     processMoreThanOneInput(params.fetch2CycleInput),
     branchPredictor(*params.branchPred),
+    enableAndesBpuF2Ack(params.enableAndesBpuF2Ack),
+    andesBpuF2AckDelay(params.andesBpuF2AckDelay),
+    bpuPending(params.numThreads),
     fetchInfo(params.numThreads),
     threadPriority(0), stats(&cpu_)
 {
@@ -200,6 +203,48 @@ Fetch2::updateBranchPrediction(const BranchData &branch)
 }
 
 void
+Fetch2::discardAndesBpuPending(ThreadID tid)
+{
+    if (!enableAndesBpuF2Ack || bpuPending[tid].empty())
+        return;
+    bpuPending[tid].clear();
+}
+
+void
+Fetch2::packInstOutput(MinorDynInstPtr dyn_inst, ThreadID tid,
+    Fetch2ThreadInfo &fetch_info, unsigned int &output_index,
+    ForwardInstData &insts_out)
+{
+    fetch_info.fetchSeqNum++;
+    if (output_index == 0)
+        insts_out.resize(outputWidth);
+    insts_out.insts[output_index] = dyn_inst;
+    output_index++;
+    if (debug::MinorTrace && !dyn_inst->isFault() &&
+        dyn_inst->staticInst->isMacroop()) {
+        dyn_inst->minorTraceInst(*this);
+    }
+}
+
+bool
+Fetch2::stepAndesBpuF2Ack(ThreadID tid, unsigned int &output_index,
+    ForwardInstData &insts_out, BranchData &prediction)
+{
+    if (!enableAndesBpuF2Ack || bpuPending[tid].empty())
+        return false;
+
+    AndesBpuPending &pend = bpuPending[tid].front();
+    if (cpu.curCycle() < pend.decodeCycle + andesBpuF2AckDelay)
+        return true;
+
+    MinorDynInstPtr ready_inst = pend.inst;
+    bpuPending[tid].pop_front();
+    predictBranch(ready_inst, prediction);
+    packInstOutput(ready_inst, tid, fetchInfo[tid], output_index, insts_out);
+    return false;
+}
+
+void
 Fetch2::predictBranch(MinorDynInstPtr inst, BranchData &branch)
 {
     Fetch2ThreadInfo &thread = fetchInfo[inst->id.threadId];
@@ -277,6 +322,7 @@ Fetch2::evaluate()
     if (branch_inp.isStreamChange()) {
         DPRINTF(Fetch, "Dumping all input as a stream changing branch"
             " has arrived\n");
+        discardAndesBpuPending(branch_inp.threadId);
         dumpAllInput(branch_inp.threadId);
         fetchInfo[branch_inp.threadId].havePC = false;
     }
@@ -322,10 +368,10 @@ Fetch2::evaluate()
 
         unsigned int output_index = 0;
 
-        /* Pack instructions into the output while we can.  This may involve
-         * using more than one input line.  Note that lineWidth will be 0
-         * for faulting lines */
-        while (line_in &&
+        const bool bpu_waiting = stepAndesBpuF2Ack(tid, output_index,
+            insts_out, prediction);
+
+        if (!bpu_waiting) while (line_in &&
             (line_in->isFault() ||
                 fetch_info.inputIndex < line_in->lineWidth) && /* More input */
             output_index < outputWidth && /* More output to fill */
@@ -476,9 +522,15 @@ Fetch2::evaluate()
                     /* Advance PC for the next instruction */
                     decoded_inst->advancePC(*fetch_info.pc);
 
-                    /* Predict any branches and issue a branch if
-                     *  necessary */
-                    predictBranch(dyn_inst, prediction);
+                    if (enableAndesBpuF2Ack &&
+                        (decoded_inst->isControl() ||
+                         decoded_inst->isSyscall())) {
+                        bpuPending[tid].push_back(
+                            {dyn_inst, cpu.curCycle()});
+                        dyn_inst = NULL;
+                    } else {
+                        predictBranch(dyn_inst, prediction);
+                    }
                 } else {
                     DPRINTF(Fetch, "Inst not ready yet\n");
                 }
@@ -496,23 +548,10 @@ Fetch2::evaluate()
             }
 
             if (dyn_inst) {
-                /* Step to next sequence number */
-                fetch_info.fetchSeqNum++;
-
-                /* Correctly size the output before writing */
-                if (output_index == 0) {
-                    insts_out.resize(outputWidth);
-                }
-                /* Pack the generated dynamic instruction into the output */
-                insts_out.insts[output_index] = dyn_inst;
-                output_index++;
-
-                /* Output MinorTrace instruction info for
-                 *  pre-microop decomposition macroops */
-                if (debug::MinorTrace && !dyn_inst->isFault() &&
-                    dyn_inst->staticInst->isMacroop()) {
-                    dyn_inst->minorTraceInst(*this);
-                }
+                packInstOutput(dyn_inst, tid, fetch_info, output_index,
+                    insts_out);
+            } else if (enableAndesBpuF2Ack && !bpuPending[tid].empty()) {
+                break;
             }
 
             /* Remember the streamSeqNum of this line so we can tell when
@@ -570,7 +609,9 @@ Fetch2::evaluate()
      *  mark stage as active */
     for (ThreadID i = 0; i < cpu.numThreads; i++)
     {
-        if (getInput(i) && nextStageReserve[i].canReserve()) {
+        if (nextStageReserve[i].canReserve() &&
+            (getInput(i) ||
+             (enableAndesBpuF2Ack && !bpuPending[i].empty()))) {
             cpu.activityRecorder->activateStage(Pipeline::Fetch2StageId);
             break;
         }
@@ -602,7 +643,15 @@ Fetch2::getScheduledThread()
     }
 
     for (auto tid : priority_list) {
-        if (getInput(tid) && !fetchInfo[tid].blocked) {
+        if (fetchInfo[tid].blocked)
+            continue;
+
+        if (enableAndesBpuF2Ack && !bpuPending[tid].empty()) {
+            threadPriority = tid;
+            return tid;
+        }
+
+        if (getInput(tid)) {
             threadPriority = tid;
             return tid;
         }

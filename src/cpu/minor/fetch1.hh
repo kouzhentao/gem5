@@ -118,7 +118,8 @@ class Fetch1 : public Named
         {
             NotIssued, /* Just been made */
             InTranslation, /* Issued to ITLB, must wait for reqply */
-            Translated, /* Translation complete */
+            AwaitingF1, /* Andes F1: ITLB done, wait min cycles before I$ */
+            Translated, /* Translation complete, F1 elapsed */
             RequestIssuing, /* Issued to memory, must wait for response */
             Complete /* Complete.  Either a fault, or a fetched line */
         };
@@ -143,6 +144,9 @@ class Fetch1 : public Named
         /** Fill in a fault if one happens during fetch, check this by
          *  picking apart the response packet */
         Fault fault;
+
+        /** Andes F0: cycle when fetch_issue latched f1_va (kv_ifu). */
+        Cycles f0IssueCycle{0};
 
         /** Make a packet to use with the memory transaction */
         void makePacket();
@@ -224,6 +228,11 @@ class Fetch1 : public Named
     /** Maximum number of fetches allowed in flight (in queues or memory) */
     unsigned int fetchLimit;
 
+    /** Andes kv_ifu: split F0 (issue+TLB) from F1 (ICU/I$ req). */
+    bool enableAndesFetchF0F1;
+    /** Min cycles F0 fetch_issue → I$ ReadReq (RTL F1 ITLB/ICU latch). */
+    Cycles andesFetchF1Delay;
+
   protected:
     /** Cycle-by-cycle state */
 
@@ -279,6 +288,9 @@ class Fetch1 : public Named
 
         /** Signal to guard against sleeping first cycle of wakeup */
         bool wakeupGuard = false;
+
+        /** Andes kv_ifu: F0 issued, F2 not yet resp (RTL num_outstanding_req). */
+        unsigned int numOutstandingReq = 0;
     };
 
     std::vector<Fetch1ThreadInfo> fetchInfo;
@@ -362,6 +374,12 @@ class Fetch1 : public Named
 
     /** Step requests along between requests and transfers queues */
     void stepQueues();
+
+    /** Andes F1: advance AwaitingF1 → Translated when delay met. */
+    void stepAndesF1Stage();
+
+    /** Andes redirect: drop stale F0/F1 requests after streamSeqNum bump. */
+    void purgeDiscardableRequests();
 
     /** Pop a request from the given queue and correctly deallocate and
      *  discard it. */

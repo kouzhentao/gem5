@@ -520,6 +520,10 @@ def apply_andes_scalar_cpu(cpu) -> None:
     cpu.enableAndesIiLxOverlap = False
     cpu.enableAndesStageOccupancy = False  # exlx-3c deadlock; see BaseMinorCPU doc
     cpu.enableAndesStageTags = True  # P4-gem5-8stage-A: scoreboard stage tags
+    cpu.enableAndesFetchF0F1 = True
+    cpu.andesFetchF1Delay = 1
+    cpu.enableAndesBpuF2Ack = True
+    cpu.andesBpuF2AckDelay = 2
     cpu.andesLxStageDepth = 3
     cpu.andesLxStageSlots = 2
     # DS238 §22.8: 5cy EX / 7cy LX on true mispredict only (see execute.cc).
