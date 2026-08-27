@@ -50,6 +50,7 @@
 #include "base/types.hh"
 #include "cpu/minor/cpu.hh"
 #include "cpu/minor/dyn_inst.hh"
+#include "cpu/minor/andes_stage.hh"
 #include "cpu/minor/trace.hh"
 #include "cpu/reg_class.hh"
 
@@ -107,6 +108,9 @@ class Scoreboard : public Named
      *  register value */
     std::vector<InstSeqNum> writingInst;
 
+    /** Andes 8-stage: bypass-stage tag for the youngest in-flight writer. */
+    std::vector<AndesStageTag> resultStageTags;
+
   public:
     Scoreboard(const std::string &name,
             const BaseISA::RegClasses& reg_classes) :
@@ -126,7 +130,8 @@ class Scoreboard : public Named
         numUnpredictableResults(numRegs, 0),
         fuIndices(numRegs, invalidFUIndex),
         returnCycle(numRegs, Cycles(0)),
-        writingInst(numRegs, 0)
+        writingInst(numRegs, 0),
+        resultStageTags(numRegs)
     { }
 
   public:

@@ -519,6 +519,7 @@ def apply_andes_scalar_cpu(cpu) -> None:
     # srcRegsRelativeLats, not EX/LX stage tags. Prototypes below FROZEN.
     cpu.enableAndesIiLxOverlap = False
     cpu.enableAndesStageOccupancy = False  # exlx-3c deadlock; see BaseMinorCPU doc
+    cpu.enableAndesStageTags = True  # P4-gem5-8stage-A: scoreboard stage tags
     cpu.andesLxStageDepth = 3
     cpu.andesLxStageSlots = 2
     # DS238 §22.8: 5cy EX / 7cy LX on true mispredict only (see execute.cc).

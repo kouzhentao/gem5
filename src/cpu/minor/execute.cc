@@ -39,6 +39,8 @@
 
 #include "arch/generic/pcstate.hh"
 #include "cpu/minor/andes_issue_rules.hh"
+#include "cpu/minor/andes_stage.hh"
+#include "cpu/minor/andes_stage.hh"
 
 #include <functional>
 
@@ -86,6 +88,7 @@ Execute::Execute(const std::string &name_, MinorCPU &cpu_,
       enableAndesNbloadHazard(params.enableAndesNbloadHazard),
       enableAndesIiLxOverlap(params.enableAndesIiLxOverlap),
       enableAndesStageOccupancy(params.enableAndesStageOccupancy),
+      enableAndesStageTags(params.enableAndesStageTags),
       andesLxStageDepth(params.andesLxStageDepth),
       andesLxStageSlots(params.andesLxStageSlots),
       branchMispredictPenalty(params.executeBranchMispredictPenalty),
@@ -895,6 +898,11 @@ Execute::issue(ThreadID thread_id)
                                     fu->cantForwardFromFUIndices,
                                     cpu.curCycle());
                         }
+                        if (enableAndesStageTags && !inst->isFault())
+                            inst->andesProducerTag =
+                                andesComputeProducerTag(inst);
+                        else
+                            inst->andesProducerTag = AndesStageTag();
                         andesIiRasOnIssue(thread_id, inst);
                         // Update ALU access stats.
                         if (!inst->isFault()) {

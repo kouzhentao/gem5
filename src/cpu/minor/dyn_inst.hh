@@ -54,6 +54,7 @@
 #include "base/types.hh"
 #include "cpu/inst_seq.hh"
 #include "cpu/minor/buffers.hh"
+#include "cpu/minor/andes_stage.hh"
 #include "cpu/pred/ras.hh"
 #include "cpu/static_inst.hh"
 #include "cpu/timing_expr.hh"
@@ -214,6 +215,9 @@ class MinorDynInst : public RefCounted
     /** Andes: ii_*_late (bit0=0 bypass / IntLate) at issue; used for
      *  struct hazard late-BR + LS (kv_iiu_scb). */
     bool andesLatePath = false;
+
+    /** Andes 8-stage: producer bypass stage tag at issue (Phase A). */
+    AndesStageTag andesProducerTag;
 
     /** Andes II/LX: cycle when scoreboard result is ready (may precede FU
      *  exit when resultLat < opLat). */

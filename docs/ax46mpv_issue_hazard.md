@@ -547,8 +547,8 @@ struct AndesStageTag {
 
 **实施顺序：**
 
-1. `AndesStageTag` + scoreboard 扩展（只 tag，不改 timing）
-2. `andesIntShouldUseLateFU` 改读 tag 而非 `returnCycle` 启发
+1. ~~`AndesStageTag` + scoreboard 扩展（只 tag，不改 timing）~~ → **P4-gem5-8stage-A done**
+2. `andesIntShouldUseLateFU` 改读 tag 而非 `returnCycle` 启发（**P4-gem5-8stage-B**）
 3. 拆 Execute→Ex/Mm/Lx 三级 valid（大改）；或 LX 计数器近似（**非目标**）
 4. CoreMark gauge 复测
 

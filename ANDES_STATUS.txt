@@ -1,4 +1,4 @@
-FOCUS: P4-gem5-8stage-A
-Status: P4-gauge done — CoreMark 3.11 CM/MHz (46 target 6.3); build OK
-Thu, 27 Aug 2026 11:45:00 +0800
-Handoff: gem5.fast linked; gauge /tmp/coremark_p4.log
+FOCUS: P4-gem5-8stage-B
+Status: P4-gem5-8stage-A pushed — AndesStageTag on scoreboard; NEXT=bypass read tag
+Thu, 27 Aug 2026 11:50:00 +0800
+Handoff: enableAndesStageTags=True; Phase B = andesSrcNeedsLatePath from tag

@@ -159,3 +159,9 @@ One block per signal/hazard. Source priority: cfg.txt → DS238 → ucore RTL.
 - **When:** II issue BR/JAL on Pred; any src from bit0=0 producer still in MM/LX (`~ii_*_mm_bypass[0]`).
 - **Blocks / allows:** No stall-to-WB on Pred; issue with `andesLatePath` + `srcRegsRelativeLats` bypass; mispredict penalty 7.
 - **gem5:** `andesBranchShouldUseLatePath`; execute clears `cantForward` mask for Pred late issue — **partial**; no separate LX bru FU.
+
+## stage-tag — scoreboard producer tag (`P4-gem5-8stage-A`)
+
+- **When:** II issue writes dest; map FU index + `ii_*_late` → bypass stage (EX/MM/LX) and `exBypassBit0`.
+- **Blocks / allows:** Tag stored in `resultStageTags[]`; issue/bypass timing **unchanged** until Phase B.
+- **gem5:** `andes_stage.hh/cc`, `enableAndesStageTags=True` in `andes_46mpv_scalar.py`.

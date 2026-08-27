@@ -124,6 +124,8 @@ class Execute : public Named
     bool enableAndesIiLxOverlap;
     /** RTL II→LX pipe occupancy decoupled from late FU opLat (exlx-3). */
     bool enableAndesStageOccupancy;
+    /** Andes 8-stage Phase A: scoreboard producer stage tags (no timing yet). */
+    bool enableAndesStageTags;
     Cycles andesLxStageDepth;
     unsigned andesLxStageSlots;
     /** DS22.8: EX-stage resolve (uncond / early). */

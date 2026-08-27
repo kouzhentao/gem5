@@ -127,11 +127,18 @@ Scoreboard::markupInstDests(MinorDynInstPtr inst, Cycles retire_time,
             if (inst->id.execSeqNum > writingInst[index]) {
                 writingInst[index] = inst->id.execSeqNum;
                 fuIndices[index] = inst->fuIndex;
+                if (inst->andesProducerTag.valid())
+                    resultStageTags[index] = inst->andesProducerTag;
             }
 
             DPRINTF(MinorScoreboard, "Marking up inst: %s"
-                " regIndex: %d final numResults: %d returnCycle: %d\n",
-                *inst, index, numResults[index], returnCycle[index]);
+                " regIndex: %d final numResults: %d returnCycle: %d"
+                " stageTag fu=%d %s late=%d exB0=%d\n",
+                *inst, index, numResults[index], returnCycle[index],
+                inst->andesProducerTag.fuTag,
+                andesPipeStageName(inst->andesProducerTag.bypassStage),
+                inst->andesProducerTag.late,
+                inst->andesProducerTag.exBypassBit0);
         } else {
             /* Use an invalid ID to mark invalid/untracked dests */
             inst->flatDestRegIdx[dest_index] = RegId();
@@ -195,6 +202,7 @@ Scoreboard::clearInstDests(MinorDynInstPtr inst, bool clear_unpredictable)
                 returnCycle[index] = Cycles(0);
                 writingInst[index] = 0;
                 fuIndices[index] = invalidFUIndex;
+                resultStageTags[index] = AndesStageTag();
             }
 
             DPRINTF(MinorScoreboard, "Clearing inst: %s"

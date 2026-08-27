@@ -48,6 +48,7 @@ if env['CONF']['BUILD_ISA']:
 
     Source('activity.cc')
     Source('andes_issue_rules.cc')
+    Source('andes_stage.cc')
     Source('cpu.cc')
     Source('decode.cc')
     Source('dyn_inst.cc')

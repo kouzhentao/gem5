@@ -469,6 +469,11 @@ class BaseMinorCPU(BaseCPU):
         2,
         "Concurrent II→LX stage holds (RTL alu2/3)",
     )
+    enableAndesStageTags = Param.Bool(
+        False,
+        "Andes 8-stage Phase A: record AndesStageTag on scoreboard at issue "
+        "(EX/MM/LX bypass stage + exBypassBit0). Timing unchanged until Phase B.",
+    )
 
     executeFuncUnits = Param.MinorFUPool(
         MinorDefaultFUPool(), "FUlines for this processor"
